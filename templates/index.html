@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tasks</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div id="content">
+    <div class="Categories">
+        <a href="/" class="tab{% if current_category == 'all' %} active{% endif %}" style="text-decoration: none;">
+            <div class="CategoryName">все</div>
+            <div class="CategoryCount">{{ categories[0][3] }}</div>
+        </a>
+        {% for category in categories %}
+            <a href="/{{ category[0] }}/" class="tab{% if current_category == category[0] | string %} active{% endif %}">
+                <div class="CategoryName">{{ category[1]|lower }}</div>
+                <div class="CategoryCount">{{ category[2] }}</div>
+            </a>
+        {% endfor %}
+    </div>
+
+    <div id="task-container">
+        {% for task in tasks %}
+            <div class="task-card">
+            <div class="info closed">
+                <div class="info_content">
+                    <img class="profile" src="/static/profile.png" alt="Profile Picture" />
+                    <div class="text">
+                        <div class="heading">
+                            <div class="time">{{task['published_date']}}</div>
+                            <h2 class="title">{{task['title']}}</h2>
+                        </div>
+                        <div class="description">{{task['description'] | safe}}</div>
+                    </div>
+                </div>
+                <div class="price">
+                    {% if task['price'] is none %}
+                        оплата обсуждаемая
+                    {% elif task['price_type'] == 2 %}
+                        {{ task['price'] }} руб. за час
+                    {% elif task['price_type'] == 3 %}
+                        {{ task['price'] }} руб. за проект
+                    {% endif %}
+                </div>
+                <a class="go-over-caption" href="{{ task['task_link'] }}"
+                   target="_blank" role="button" aria-label="Перейти к задаче">
+                    перейти</a>
+            <div class="light"></div>
+            </div>
+            <div class="neuro-info {% if not task['complaint_exists'] %} sent{% endif %}">
+                <div class="neuro-title">Оценка нейросети</div>
+                <form class="complaint-form" action="/submit_complaint" method="post">
+                    <input type="hidden" name="processing_id" value="{{ task['task_id'] }}">
+                    <select class="dropdown" name="user_proposed_category">
+                        {% for category in categories %}
+                            <option value="{{ category[0] }}"
+                                    {% if task['category_name'] == category[1] %}selected{% endif %}>{{ category[1] }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="submit"></button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+        <div id="pagination">
+            {% if current_page > 1 %}
+                <a href="/{{ current_category }}/{{ current_page - 1 }}">Previous</a>
+            {% endif %}
+            <span>Page: {{ current_page }}</span>
+            <a href="/{{ current_category }}/{{ current_page + 1 }}">Next</a>
+        </div>
+    </div>
+    </div>
+
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
