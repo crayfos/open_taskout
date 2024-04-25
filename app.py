@@ -9,7 +9,7 @@ from flask_apscheduler import APScheduler
 from datetime import datetime, timedelta
 from threading import Lock
 
-from parser.habr import start_habr_parser
+from web.parser.habr.habr import start_habr_parser
 
 app = Flask(__name__)
 scheduler = APScheduler()
@@ -20,31 +20,31 @@ def humanize_datetime(datetime_str):
     return arrow.get(dt).humanize(locale='ru')
 
 
-# def process_complaints():
-#     conn = psycopg2.connect(**db_params)
-#     cur = conn.cursor()
-#     # Получаем все нерассмотренные жалобы
-#     cur.execute(
-#         "SELECT complaint_id, processing_id, user_proposed_category FROM complaints "
-#         "WHERE complaint_status IS NULL"
-#     )
-#     complaints = cur.fetchall()
-#
-#     for complaint_id, processing_id, user_proposed_category in complaints:
-#         # Обновляем категорию и статус в task_processing
-#         cur.execute(
-#             "UPDATE task_processing SET category = %s, status = %s, category_change_date = %s "
-#             "WHERE processing_id = %s",
-#             (user_proposed_category, 'manual', datetime.now(), processing_id)
-#         )
-#         # Устанавливаем статус жалобы как 'Принято'
-#         cur.execute(
-#             "UPDATE complaints SET complaint_status = (SELECT complaint_status_id FROM complaint_statuses WHERE complaint_status_name = 'Принято') "
-#             "WHERE complaint_id = %s",
-#             (complaint_id,)
-#         )
-#     conn.commit()
-#     conn.close()
+def process_complaints():
+    conn = psycopg2.connect(**db_params)
+    cur = conn.cursor()
+    # Получаем все нерассмотренные жалобы
+    cur.execute(
+        "SELECT complaint_id, processing_id, user_proposed_category FROM complaints "
+        "WHERE complaint_status = 0"
+    )
+    complaints = cur.fetchall()
+
+    for complaint_id, processing_id, user_proposed_category in complaints:
+        # Обновляем категорию и статус в task_processing
+        cur.execute(
+            "UPDATE task_processing SET category = %s, status = %s, category_change_date = %s "
+            "WHERE processing_id = %s",
+            (user_proposed_category, 4, datetime.now(), processing_id)
+        )
+        # Устанавливаем статус жалобы как 'Принято'
+        cur.execute(
+            "UPDATE complaints SET complaint_status = 1 "
+            "WHERE complaint_id = %s",
+            (complaint_id,)
+        )
+    conn.commit()
+    conn.close()
 
 
 def get_categories():
@@ -52,6 +52,8 @@ def get_categories():
     cur = conn.cursor()
     cur.execute(
         "SELECT categories.category_id, categories.category_name, COUNT(tasks.task_id), "
+        "(SELECT COUNT(*) FROM task_processing tp WHERE tp.category = categories.category_id AND tp.status = 4) AS "
+        "status_4_task_count,"
         "(SELECT COUNT(tasks.task_id) FROM tasks) AS total_task_count "
         "FROM categories "
         "LEFT JOIN task_processing ON categories.category_id = task_processing.category "
@@ -65,6 +67,7 @@ def get_categories():
 
 
 def get_tasks(category, page):
+    process_complaints()
     tasks_per_page = 30
     offset = (page - 1) * tasks_per_page
     conn = psycopg2.connect(**db_params)
@@ -114,7 +117,8 @@ def get_tasks(category, page):
 def category_index(category, page=1):
     categories = get_categories()
     tasks = get_tasks(category, page)
-    return render_template('index.html', tasks=tasks, categories=categories, current_category=category, current_page=page)
+    return render_template('index.html', tasks=tasks, categories=categories, current_category=category,
+                           current_page=page)
 
 
 @app.route('/<int:page>')
@@ -155,11 +159,9 @@ def submit_complaint():
     return jsonify({'message': "Жалоба отправлена."})
 
 
-
-
-
-
 parser_lock = Lock()
+
+
 def scheduled_parsing():
     with parser_lock:
         print("Запуск парсера...")
