@@ -25,23 +25,33 @@ def process_complaints():
     cur = conn.cursor()
     # Получаем все нерассмотренные жалобы
     cur.execute(
-        "SELECT complaint_id, processing_id, user_proposed_category FROM complaints "
-        "WHERE complaint_status = 0"
+        "SELECT c.complaint_id, tp.processing_id, c.user_proposed_category, tp.category "
+        "FROM complaints c "
+        "JOIN task_processing tp ON c.processing_id = tp.processing_id "
+        "WHERE c.complaint_status = 0"
     )
     complaints = cur.fetchall()
 
-    for complaint_id, processing_id, user_proposed_category in complaints:
-        # Обновляем категорию и статус в task_processing
+    for complaint_id, processing_id, user_proposed_category, current_category in complaints:
+        if user_proposed_category != current_category:
+            cur.execute(
+                "UPDATE task_processing SET status = %s "
+                "WHERE processing_id = %s",
+                (4, processing_id)
+            )
+            complaint_status = 2
+        else:
+            cur.execute(
+                "UPDATE task_processing SET category = %s, status = %s, category_change_date = %s "
+                "WHERE processing_id = %s",
+                (user_proposed_category, 4, datetime.now(), processing_id)
+            )
+            complaint_status = 1
+
         cur.execute(
-            "UPDATE task_processing SET category = %s, status = %s, category_change_date = %s "
-            "WHERE processing_id = %s",
-            (user_proposed_category, 4, datetime.now(), processing_id)
-        )
-        # Устанавливаем статус жалобы как 'Принято'
-        cur.execute(
-            "UPDATE complaints SET complaint_status = 1 "
+            "UPDATE complaints SET complaint_status = %s "
             "WHERE complaint_id = %s",
-            (complaint_id,)
+            (complaint_status, complaint_id)
         )
     conn.commit()
     conn.close()
