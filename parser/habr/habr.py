@@ -11,7 +11,7 @@ import requests
 from requests.exceptions import Timeout, ConnectionError, RequestException
 
 import psycopg2
-from .db_config import db_params
+from web.parser.db_config import db_params
 from .habr_categories import categories_info
 
 locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')

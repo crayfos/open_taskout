@@ -3,7 +3,7 @@ import os
 
 
 def start_parser():
-    with open("habr.py", encoding="utf-8") as file:
+    with open("habr/habr.py", encoding="utf-8") as file:
         code = file.read()
         exec(code)
 
