@@ -14,7 +14,6 @@ import psycopg2
 from web.parser.db_config import db_params
 from web.parser.habr.habr_categories import categories_info
 
-
 tasks_counter = 0
 
 locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
@@ -22,6 +21,7 @@ headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 }
+
 
 def url_exists_in_db(url, cursor):
     cursor.execute('SELECT EXISTS(SELECT 1 FROM tasks WHERE url=%s)', (url,))
@@ -65,20 +65,28 @@ def get_published_date(meta_string):
         return published_date.strftime('%Y-%m-%d %H:%M:%S')
     return None
 
-def parse_price(price_str):
-    # Извлечь цену и тип цены из строки
-    price_type_id = 1  # договорная по умолчанию
-    price = None
 
+def parse_price(price_str):
+    price_type_id = 1
     if 'заказ' in price_str:
         price_type_id = 3
     elif 'час' in price_str:
         price_type_id = 2
 
-    price_str = re.sub(r'[^0-9]', '', price_str)
-    price = int(price_str) if price_str else None
+    range_type, max_price = 0, 0
+    match = re.search(r"Бюджет:\s*(До|Более)?\s*(\d+(?:\s*\d+)*)\s*(?:[-—]\s*(\d+(?:\s*\d+)*))?", price_str)
+    if match:
+        first_price = match.group(2).replace(" ", "")
+        second_price = match.group(3).replace(" ", "") if match.group(3) else None
+        max_price = max(int(first_price), int(second_price)) if second_price else int(first_price)
+        range_group = match.group(1)
 
-    return price, price_type_id
+        if range_group == "Более":
+            range_type = 2
+        elif range_group == "До" or second_price:
+            range_type = 1
+
+    return max_price, range_type, price_type_id
 
 
 def get_task_details(task_url):
@@ -86,34 +94,43 @@ def get_task_details(task_url):
         response = requests.get(task_url, headers=headers, timeout=5)
         soup = BeautifulSoup(response.text, 'html.parser')
         title = soup.find('h1', {'id': True}).get_text(strip=True)
-        description = soup.find('div', {'id': True, 'class': 'text-5'}).get_text(separator=' ', strip=True)
+        description = str(soup.find('div', {'id': True, 'class': 'text-5'}))
+        description = re.sub(r'<div.*?\n\s+', '', description)
+        description = re.sub(r'\s+</div>', '', description)
+        description = re.sub(r'\\xa0', '', description)
 
         price_div = soup.find('div', {'class': 'text-4'})
         price_str = price_div.get_text(strip=True)
-        price, price_type_id = parse_price(price_str)
+        price, price_range_type, price_type_id = parse_price(price_str)
 
         meta_div = soup.find('div', {'class': 'b-layout__txt b-layout__txt_padbot_30 mt-32'})
         meta_str = meta_div.find('div', {'class': 'text-5'}).get_text(strip=True)
         published_date = get_published_date(meta_str)
 
         categories = [a.get_text(strip=True) for a in soup.find_all('a', {'data-id': 'category-spec'})]
-        standard_category = categories[0]
-        standard_subcategory = categories[1]
+        if not categories:
+            standard_category, standard_subcategory = 'Прочее', 'Прочее'
+        else:
+            standard_category, standard_subcategory = categories[0], categories[1]
 
         task_details = {
             'url': task_url,
             'title': title,
             'description': description,
             'price': price,
+            'price_range_type': price_range_type,
             'price_type_id': price_type_id,
             'published_date': published_date,
             'standard_category': standard_category,
-            'standard_subcategory': standard_subcategory
+            'standard_subcategory': standard_subcategory,
         }
-
+        empty_fields = [key for key, value in task_details.items() if
+                        not value and (key != 'price_range_type' and key != 'price')]
+        if empty_fields:
+            raise ValueError(f"Следующие поля пустые: {', '.join(empty_fields)}")
         return task_details
-    except ConnectionError as e:
-        print(f"Ошибка соединения при запросе к {task_url}: {e}")
+    except ValueError as ve:
+        print(f"Получены неполные данные для задачи {task_url}: {ve}")
 
 
 task_queue = queue.Queue()
@@ -204,7 +221,6 @@ def consumer(retry_limit=3, delay_between_retries=5):
             # Попытаемся получить детали задания
             task_info = get_task_details(link)
 
-
             with print_lock:
                 print(task_info)
             # new_task = save_task_to_db(task_info)
@@ -245,8 +261,8 @@ def start_habr_parser():
     producer_thread.start()
 
     # Запускаем рабочие потоки потребителей
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        futures = [executor.submit(consumer) for _ in range(1)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(consumer) for _ in range(10)]
 
     # Дождемся завершения всех потребителей
     concurrent.futures.wait(futures)

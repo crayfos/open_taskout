@@ -12,7 +12,7 @@ from requests.exceptions import Timeout, ConnectionError, RequestException
 
 import psycopg2
 from web.parser.db_config import db_params
-from .habr_categories import categories_info
+from habr_categories import categories_info
 
 locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
 
@@ -88,35 +88,34 @@ def parse_price(price_str):
 
 
 def get_task_details(task_url):
-    try:
-        response = requests.get(task_url, timeout=5)
-        soup = BeautifulSoup(response.text, 'html.parser')
+    response = requests.get(task_url, timeout=5)
+    soup = BeautifulSoup(response.text, 'html.parser')
 
-        title = soup.find('h2', class_='task__title').get_text(separator=' ', strip=True)
-        price_str = soup.find('div', class_='task__finance').get_text(strip=True)
-        price, price_type_id = parse_price(price_str)
+    title = soup.find('h2', class_='task__title').get_text(separator=' ', strip=True)
+    price_str = soup.find('div', class_='task__finance').get_text(strip=True)
+    price, price_type_id = parse_price(price_str)
 
-        meta = soup.find('div', class_='task__meta').get_text(strip=True)
-        published_date = get_published_date(meta)
+    meta = soup.find('div', class_='task__meta').get_text(strip=True)
+    published_date = get_published_date(meta)
 
-        description = str(soup.find('div', class_='task__description')) \
-            .replace('<div class="task__description">\n', '') \
-            .replace('\n</div>', '')
+    description = str(soup.find('div', class_='task__description')) \
+        .replace('<div class="task__description">\n', '') \
+        .replace('\n</div>', '')
 
-        task_details = {
-            'url': task_url,
-            'title': title,
-            'description': description,
-            'price': price,
-            'price_type_id': price_type_id,
-            'published_date': published_date,
-            'standard_category': '',
-            'standard_subcategory': ''
-        }
+    range_type = 0
+    task_details = {
+        'url': task_url,
+        'title': title,
+        'description': description,
+        'price': price,
+        'price_range_type': range_type,
+        'price_type_id': price_type_id,
+        'published_date': published_date,
+        'standard_category': '',
+        'standard_subcategory': ''
+    }
 
-        return task_details
-    except ConnectionError as e:
-        print(f"Ошибка соединения при запросе к {task_url}: {e}")
+    return task_details
 
 
 task_queue = queue.Queue()
@@ -155,14 +154,15 @@ def save_task_to_db(task_details):
     task_id = None  # Инициализация переменной task_id
     try:
         insert_query = '''
-        INSERT INTO tasks (url, title, description, price, price_type_id, published_date, standard_category, standard_subcategory)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING task_id;
+        INSERT INTO tasks (url, title, description, price, price_range_type, price_type_id, published_date, standard_category, standard_subcategory)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING task_id;
         '''
         cursor.execute(insert_query, (
             task_details['url'],
             task_details['title'],
             task_details['description'],
             task_details['price'],
+            task_details['price_range_type'],
             task_details['price_type_id'],
             task_details['published_date'],
             task_details['standard_category'],

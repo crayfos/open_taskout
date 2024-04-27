@@ -189,7 +189,7 @@ scheduler.init_app(app)
 scheduler.start()
 
 if __name__ == '__main__':
-    if not scheduler.get_job('Scheduled Parsing'):
-        scheduler.add_job(id='Scheduled Parsing', func=scheduled_parsing, trigger='date',
-                          run_date=datetime.now() + timedelta(minutes=1))
+    # if not scheduler.get_job('Scheduled Parsing'):
+    #     scheduler.add_job(id='Scheduled Parsing', func=scheduled_parsing, trigger='date',
+    #                       run_date=datetime.now() + timedelta(minutes=1))
     app.run()
