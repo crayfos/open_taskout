@@ -74,7 +74,7 @@ def parse_price(price_str):
     elif 'час' in price_str:
         price_type_id = 2
 
-    range_type, max_price = 0, 0
+    range_type, max_price = 1, 0
     match = re.search(r"Бюджет:\s*(До|Более)?\s*(\d+(?:\s*\d+)*)\s*(?:[-—]\s*(\d+(?:\s*\d+)*))?", price_str)
     if match:
         first_price = match.group(2).replace(" ", "")
@@ -83,9 +83,9 @@ def parse_price(price_str):
         range_group = match.group(1)
 
         if range_group == "Более":
-            range_type = 2
+            range_type = 3
         elif range_group == "До" or second_price:
-            range_type = 1
+            range_type = 2
 
     return max_price, range_type, price_type_id
 
@@ -112,7 +112,7 @@ def get_task_details(task_url):
         if not categories:
             standard_category, standard_subcategory = 'Прочее', 'Прочее'
         else:
-            standard_category, standard_subcategory = categories[0], categories[1]
+            standard_category, standard_subcategory = categories[0], categories[1] if len(categories) == 2 else "Другое"
 
         task_details = {
             'url': task_url,
@@ -210,15 +210,13 @@ def save_task_processing(task_id, task_info):
                     category_id = category_info[0]
         if category_id == 0:
             category_id = 6
-        with print_lock:
-            print(f'{category_id}: {task_info}')
 
-        # status_id = 2
-        # insert_query = '''INSERT INTO task_processing (task_id, category, status, category_change_date)
-        #                   VALUES (%s, %s, %s, %s)'''
-        # category_change_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        # cursor.execute(insert_query, (task_id, category_id, status_id, category_change_date))
-        # conn.commit()
+        status_id = 2
+        insert_query = '''INSERT INTO task_processing (task_id, category, status, category_change_date)
+                          VALUES (%s, %s, %s, %s)'''
+        category_change_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute(insert_query, (task_id, category_id, status_id, category_change_date))
+        conn.commit()
     except Exception as e:
         print(f"Ошибка при вставке в БД: {e}")
         conn.rollback()
@@ -235,12 +233,12 @@ def consumer(retry_limit=3, delay_between_retries=5):
 
             # Попытаемся получить детали задания
             task_info = get_task_details(link)
-            save_task_processing(task_info)
+
             # with print_lock:
             #     print(task_info)
-            # new_task = save_task_to_db(task_info)
-            # if new_task is not None:
-            #     save_task_processing(new_task, task_info)
+            new_task = save_task_to_db(task_info)
+            if new_task is not None:
+                save_task_processing(new_task, task_info)
 
             global tasks_counter
             tasks_counter += 1
@@ -269,7 +267,7 @@ def consumer(retry_limit=3, delay_between_retries=5):
             task_queue.task_done()
 
 
-def start_habr_parser():
+def start_parser():
     global tasks_counter
     producer_finished_event.clear()
     producer_thread = threading.Thread(target=producer)
@@ -288,4 +286,4 @@ def start_habr_parser():
 
 
 if __name__ == "__main__":
-    start_habr_parser()
+    start_parser()
