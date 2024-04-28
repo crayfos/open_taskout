@@ -12,7 +12,8 @@ from requests.exceptions import Timeout, ConnectionError, RequestException
 
 import psycopg2
 from web.parser.db_config import db_params
-from web.parser.habr.habr_categories import categories_info
+from web.parser.fl_ru.fl_ru_categories import subcategories_info
+from web.parser.fl_ru.fl_ru_categories import categories_info
 
 tasks_counter = 0
 
@@ -145,8 +146,8 @@ def producer(retries=5):
 
     while depth < 3:
         if retries == 0:
-            print(f"Превышено максимальное количество попыток для {url}")
             break
+
         links = get_task_links(f"{url}page-{page_number}/")
         if links and links[0] != 'error':
             for link in links:
@@ -154,10 +155,10 @@ def producer(retries=5):
             page_number += 1
         elif links and links[0] == 'error':
             retries -= 1
-            print(f"Повторная попытка {retries} для URL {url}")
+            print(f"Повторная попытка {retries} для URL {url}page-{page_number}/")
         else:
             depth += 1
-            print(f"Список новых заданий получен")
+    print(f"Список новых заданий получен")
     producer_finished_event.set()
 
 
@@ -167,14 +168,15 @@ def save_task_to_db(task_details):
     task_id = None  # Инициализация переменной task_id
     try:
         insert_query = '''
-        INSERT INTO tasks (url, title, description, price, price_type_id, published_date, standard_category, standard_subcategory)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING task_id;
+        INSERT INTO tasks (url, title, description, price, price_range_type, price_type_id, published_date, standard_category, standard_subcategory)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING task_id;
         '''
         cursor.execute(insert_query, (
             task_details['url'],
             task_details['title'],
             task_details['description'],
             task_details['price'],
+            task_details['price_range_type'],
             task_details['price_type_id'],
             task_details['published_date'],
             task_details['standard_category'],
@@ -193,17 +195,30 @@ def save_task_to_db(task_details):
 
 
 # Этот код предполагает, что функция save_task_to_db возвращает task_id новой задачи
-def save_task_processing(task_id, deep_category):
+def save_task_processing(task_id, task_info):
     conn = psycopg2.connect(**db_params)
     cursor = conn.cursor()
     try:
-        category_id = deep_category
-        status_id = 2
-        insert_query = '''INSERT INTO task_processing (task_id, category, status, category_change_date)
-                          VALUES (%s, %s, %s, %s)'''
-        category_change_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute(insert_query, (task_id, category_id, status_id, category_change_date))
-        conn.commit()
+        category_id = 0
+        for subcategory_info in subcategories_info:
+            if (task_info['standard_category'] == subcategory_info[1] and
+                    task_info['standard_subcategory'] == subcategory_info[2]):
+                category_id = subcategory_info[0]
+        if category_id == 0:
+            for category_info in categories_info:
+                if task_info['standard_category'] == category_info[1]:
+                    category_id = category_info[0]
+        if category_id == 0:
+            category_id = 6
+        with print_lock:
+            print(f'{category_id}: {task_info}')
+
+        # status_id = 2
+        # insert_query = '''INSERT INTO task_processing (task_id, category, status, category_change_date)
+        #                   VALUES (%s, %s, %s, %s)'''
+        # category_change_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        # cursor.execute(insert_query, (task_id, category_id, status_id, category_change_date))
+        # conn.commit()
     except Exception as e:
         print(f"Ошибка при вставке в БД: {e}")
         conn.rollback()
@@ -220,12 +235,12 @@ def consumer(retry_limit=3, delay_between_retries=5):
 
             # Попытаемся получить детали задания
             task_info = get_task_details(link)
-
-            with print_lock:
-                print(task_info)
+            save_task_processing(task_info)
+            # with print_lock:
+            #     print(task_info)
             # new_task = save_task_to_db(task_info)
             # if new_task is not None:
-            #     save_task_processing(new_task, deep_category)
+            #     save_task_processing(new_task, task_info)
 
             global tasks_counter
             tasks_counter += 1
