@@ -84,7 +84,7 @@ def get_tasks(category, page):
     cur = conn.cursor()
     if category == 'all':
         cur.execute(
-            "SELECT task_processing.processing_id, tasks.*, statuses.status_name, categories.category_name FROM tasks "
+            "SELECT tasks.*, statuses.status_name, categories.category_name FROM tasks "
             "JOIN task_processing ON tasks.task_id = task_processing.task_id "
             "JOIN categories ON categories.category_id = task_processing.category "
             "JOIN statuses ON task_processing.status = statuses.status_id "

@@ -11,7 +11,7 @@ import requests
 from requests.exceptions import Timeout, ConnectionError, RequestException
 
 import psycopg2
-from web.parser.db_config import db_params
+from web.db_config import db_params
 from web.parser.habr.habr_categories import categories_info
 
 locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
@@ -103,7 +103,7 @@ def get_task_details(task_url):
     description = re.sub(r'\xa0|&nbsp;|^\n*\s+|\s+\n*$', '', description)
     description = re.sub(r'(<br\/?>\s*){3,}', '<br><br><br>', description)
 
-    range_type = 0
+    range_type = 1
     task_details = {
         'url': task_url,
         'title': title,
