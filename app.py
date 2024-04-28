@@ -92,7 +92,7 @@ def get_tasks(category, page):
             "LIMIT %s OFFSET %s", (tasks_per_page, offset))
     else:
         cur.execute(
-            "SELECT task_processing.processing_id, tasks.*, statuses.status_name, categories.category_name FROM tasks "
+            "SELECT tasks.*, statuses.status_name, categories.category_name FROM tasks "
             "JOIN task_processing ON tasks.task_id = task_processing.task_id "
             "JOIN categories ON categories.category_id = task_processing.category "
             "JOIN statuses ON task_processing.status = statuses.status_id "
@@ -105,13 +105,14 @@ def get_tasks(category, page):
     for task in tasks:
         task_dict = {
             'task_id': task[0],
-            'task_link': task[2],
-            'title': task[3],
-            'description': task[4],
-            'price': task[5],
+            'task_link': task[1],
+            'title': task[2],
+            'description': task[3],
+            'price': task[4],
+            'price_range_type': task[5],
             'price_type': task[6],
             'published_date': humanize_datetime(task[7]),
-            'status_name': task[8],
+            'status_name': task[10],
             'category_name': task[11],
         }
         cur.execute("SELECT * FROM complaints WHERE processing_id = %s", (task_dict['task_id'],))

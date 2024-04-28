@@ -36,9 +36,17 @@
                     </div>
                 </div>
                 <div class="price">
-                    {% if task['price'] is none %}
+                    {% if task['price_type'] == 1 %}
                         оплата обсуждаемая
-                    {% elif task['price_type'] == 2 %}
+                    {% endif %}
+
+                    {% if task['price_range_type'] == 1 %}
+                        до
+                    {% elif task['price_range_type'] == 2 %}
+                        более
+                    {% endif %}
+
+                    {% if task['price_type'] == 2 %}
                         {{ task['price'] }} руб. за час
                     {% elif task['price_type'] == 3 %}
                         {{ task['price'] }} руб. за проект
