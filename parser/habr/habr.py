@@ -12,7 +12,7 @@ from requests.exceptions import Timeout, ConnectionError, RequestException
 
 import psycopg2
 from web.parser.db_config import db_params
-from habr_categories import categories_info
+from web.parser.habr.habr_categories import categories_info
 
 locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
 
@@ -98,9 +98,10 @@ def get_task_details(task_url):
     meta = soup.find('div', class_='task__meta').get_text(strip=True)
     published_date = get_published_date(meta)
 
-    description = str(soup.find('div', class_='task__description')) \
-        .replace('<div class="task__description">\n', '') \
-        .replace('\n</div>', '')
+    description = str(soup.find('div', class_='task__description'))
+    description = re.sub(r'<(?!br\b|br\/\b)[^>]+>', '', description)
+    description = re.sub(r'\xa0|&nbsp;|^\n*\s+|\s+\n*$', '', description)
+    description = re.sub(r'(<br\/?>\s*){3,}', '<br><br><br>', description)
 
     range_type = 0
     task_details = {
