@@ -96,7 +96,7 @@ def get_task_details(task_url):
         soup = BeautifulSoup(response.text, 'html.parser')
         title = soup.find('h1', {'id': True}).get_text(strip=True)
         description = str(soup.find('div', {'id': True, 'class': 'text-5'}))
-        description = re.sub(r'<(?!br\b|br\/\b)[^>]+>', '', description)
+        description = re.sub(r'<(?!br\/*\b)[^>]+><(?!\/*a\b)[^>]+>', '<br>', description)
         description = re.sub(r'\xa0|&nbsp;|^\n*\s+|\s+\n*$', '', description)
         description = re.sub(r'(<br\/?>\s*){3,}', '<br><br><br>', description)
 
@@ -267,7 +267,7 @@ def consumer(retry_limit=3, delay_between_retries=5):
             task_queue.task_done()
 
 
-def start_parser():
+def start_fl_parser():
     global tasks_counter
     producer_finished_event.clear()
     producer_thread = threading.Thread(target=producer)
@@ -286,4 +286,4 @@ def start_parser():
 
 
 if __name__ == "__main__":
-    start_parser()
+    start_fl_parser()

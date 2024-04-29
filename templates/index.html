@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tasks</title>
     <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" type="image/svg+xml" href="/static/images/favicon.svg">
+    <link rel="icon" type="image/png" href="/static/images/favicon.png">
 </head>
 <body>
     <div id="content">
@@ -26,7 +28,11 @@
             <div class="task-card">
             <div class="info closed">
                 <div class="info_content">
-                    <img class="profile" src="/static/profile.png" alt="Profile Picture" />
+                    {% if 'freelance.habr.com' in task['task_link'] %}
+                        <img class="profile" src="/static/images/avatars/habr_freelance.png" alt="Profile Picture" />
+                    {% elif 'fl.ru' in task['task_link'] %}
+                        <img class="profile" src="/static/images/avatars/fl_ru.png" alt="Profile Picture" />
+                    {% endif %}
                     <div class="text">
                         <div class="heading">
                             <div class="time">{{task['published_date']}}</div>

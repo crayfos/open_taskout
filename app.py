@@ -9,7 +9,7 @@ from flask_apscheduler import APScheduler
 from datetime import datetime, timedelta
 from threading import Lock
 
-from web.parser.habr.habr import start_habr_parser
+from web.parser.parser import start_parser
 
 app = Flask(__name__)
 scheduler = APScheduler()
@@ -64,7 +64,7 @@ def get_categories():
         "SELECT categories.category_id, categories.category_name, COUNT(tasks.task_id), "
         "(SELECT COUNT(*) FROM task_processing tp WHERE tp.category = categories.category_id AND tp.status = 4) AS "
         "status_4_task_count,"
-        "(SELECT COUNT(tasks.task_id) FROM tasks) AS total_task_count "
+        "(SELECT COUNT(task_processing.task_id) FROM task_processing) AS total_task_count "
         "FROM categories "
         "LEFT JOIN task_processing ON categories.category_id = task_processing.category "
         "LEFT JOIN tasks ON tasks.task_id = task_processing.task_id "
@@ -176,7 +176,7 @@ parser_lock = Lock()
 def scheduled_parsing():
     with parser_lock:
         print("Запуск парсера...")
-        start_habr_parser()
+        start_parser()
 
         next_parsing_time = datetime.now() + timedelta(minutes=1)
         scheduler.add_job(id='Scheduled Parsing', func=scheduled_parsing, trigger='date', run_date=next_parsing_time)
@@ -190,7 +190,7 @@ scheduler.init_app(app)
 scheduler.start()
 
 if __name__ == '__main__':
-    # if not scheduler.get_job('Scheduled Parsing'):
-    #     scheduler.add_job(id='Scheduled Parsing', func=scheduled_parsing, trigger='date',
-    #                       run_date=datetime.now() + timedelta(minutes=1))
+    if not scheduler.get_job('Scheduled Parsing'):
+        scheduler.add_job(id='Scheduled Parsing', func=scheduled_parsing, trigger='date',
+                          run_date=datetime.now() + timedelta(minutes=1))
     app.run()

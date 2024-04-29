@@ -99,7 +99,7 @@ def get_task_details(task_url):
     published_date = get_published_date(meta)
 
     description = str(soup.find('div', class_='task__description'))
-    description = re.sub(r'<(?!br\b|br\/\b)[^>]+>', '', description)
+    description = re.sub(r'<(?!br\/*\b)[^>]+><(?!\/*a\b)[^>]+>', '<br>', description)
     description = re.sub(r'\xa0|&nbsp;|^\n*\s+|\s+\n*$', '', description)
     description = re.sub(r'(<br\/?>\s*){3,}', '<br><br><br>', description)
 
