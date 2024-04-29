@@ -66,7 +66,7 @@
             <div class="neuro-info {% if not task['complaint_exists'] %} sent{% endif %}">
                 <div class="neuro-title">Оценка нейросети</div>
                 <form class="complaint-form" action="/submit_complaint" method="post">
-                    <input type="hidden" name="processing_id" value="{{ task['task_id'] }}">
+                    <input type="hidden" name="processing_id" value="{{ task['task_processing_id'] }}">
                     <select class="dropdown" name="user_proposed_category">
                         {% for category in categories %}
                             <option value="{{ category[0] }}"

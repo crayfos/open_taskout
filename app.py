@@ -28,23 +28,23 @@ def process_complaints():
         "SELECT c.complaint_id, tp.processing_id, c.user_proposed_category, tp.category "
         "FROM complaints c "
         "JOIN task_processing tp ON c.processing_id = tp.processing_id "
-        "WHERE c.complaint_status = 0"
+        "WHERE c.user_proposed_category != tp.category OR c.complaint_status = 0"
     )
     complaints = cur.fetchall()
 
     for complaint_id, processing_id, user_proposed_category, current_category in complaints:
         if user_proposed_category != current_category:
             cur.execute(
-                "UPDATE task_processing SET status = %s "
+                "UPDATE task_processing SET category = %s, status = %s, category_change_date = %s "
                 "WHERE processing_id = %s",
-                (4, processing_id)
+                (user_proposed_category, 4, datetime.now(), processing_id)
             )
             complaint_status = 2
         else:
             cur.execute(
-                "UPDATE task_processing SET category = %s, status = %s, category_change_date = %s "
+                "UPDATE task_processing SET status = %s "
                 "WHERE processing_id = %s",
-                (user_proposed_category, 4, datetime.now(), processing_id)
+                (4, processing_id)
             )
             complaint_status = 1
 
@@ -84,7 +84,7 @@ def get_tasks(category, page):
     cur = conn.cursor()
     if category == 'all':
         cur.execute(
-            "SELECT tasks.*, statuses.status_name, categories.category_name FROM tasks "
+            "SELECT tasks.*, statuses.status_name, categories.category_name, processing_id FROM tasks "
             "JOIN task_processing ON tasks.task_id = task_processing.task_id "
             "JOIN categories ON categories.category_id = task_processing.category "
             "JOIN statuses ON task_processing.status = statuses.status_id "
@@ -92,7 +92,7 @@ def get_tasks(category, page):
             "LIMIT %s OFFSET %s", (tasks_per_page, offset))
     else:
         cur.execute(
-            "SELECT tasks.*, statuses.status_name, categories.category_name FROM tasks "
+            "SELECT tasks.*, statuses.status_name, categories.category_name, processing_id FROM tasks "
             "JOIN task_processing ON tasks.task_id = task_processing.task_id "
             "JOIN categories ON categories.category_id = task_processing.category "
             "JOIN statuses ON task_processing.status = statuses.status_id "
@@ -114,8 +114,9 @@ def get_tasks(category, page):
             'published_date': humanize_datetime(task[7]),
             'status_name': task[10],
             'category_name': task[11],
+            'task_processing_id': task[12],
         }
-        cur.execute("SELECT * FROM complaints WHERE processing_id = %s", (task_dict['task_id'],))
+        cur.execute("SELECT * FROM complaints WHERE processing_id = %s", (task_dict['task_processing_id'],))
         task_dict['complaint_exists'] = cur.fetchone() is not None
         tasks_list.append(task_dict)
 
@@ -190,7 +191,7 @@ scheduler.init_app(app)
 scheduler.start()
 
 if __name__ == '__main__':
-    if not scheduler.get_job('Scheduled Parsing'):
-        scheduler.add_job(id='Scheduled Parsing', func=scheduled_parsing, trigger='date',
-                          run_date=datetime.now() + timedelta(minutes=1))
+    # if not scheduler.get_job('Scheduled Parsing'):
+    #     scheduler.add_job(id='Scheduled Parsing', func=scheduled_parsing, trigger='date',
+    #                       run_date=datetime.now() + timedelta(minutes=1))
     app.run()
