@@ -96,7 +96,7 @@ def get_task_details(task_url):
         soup = BeautifulSoup(response.text, 'html.parser')
         title = soup.find('h1', {'id': True}).get_text(strip=True)
         description = str(soup.find('div', {'id': True, 'class': 'text-5'}))
-        description = re.sub(r'<(?!br\/*\b)[^>]+><(?!\/*a\b)[^>]+>', '<br>', description)
+        description = re.sub(r'<(?!br\/*\b|\/*a\b)[^>]+>', '<br>', description)
         description = re.sub(r'\xa0|&nbsp;|^\n*\s+|\s+\n*$', '', description)
         description = re.sub(r'(<br\/?>\s*){3,}', '<br><br><br>', description)
 
