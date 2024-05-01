@@ -1,8 +1,5 @@
 import pandas as pd
-
 import string
-from razdel import tokenize
-import nltk
 from nltk.corpus import stopwords
 from nltk.stem.snowball import SnowballStemmer
 
@@ -20,7 +17,6 @@ from sklearn.model_selection import train_test_split
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 
-from RNNmodel import AttentionRNN
 from CNNmodel import TextCNN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,25 +24,31 @@ print(device)
 
 
 class TextDataset(Dataset):
-    def __init__(self, texts, labels, vocab=None):
+    def __init__(self, texts, labels):
         self.texts = texts
         self.labels = labels
-        # self.tokenizer = tokenize
         self.tokenizer = get_tokenizer('spacy', 'ru_core_news_sm')
         self.stemmer = SnowballStemmer("russian")
         self.stop_words = set(stopwords.words('russian'))
-        self.vocab = vocab or self.build_vocab(self.texts)
+        self.vocab = self.build_vocab(self.texts)
         with open('vocab.pkl', 'wb') as f:
             pickle.dump(self.vocab, f)
 
-    def build_vocab(self, texts):
+    def build_vocab(self, texts, min_freq=3):
         # Подсчёт слов для создания словаря
         counter = Counter()
         for text in texts:
-            tokens = self.tokenizer(text)
-            # tokens = [word.text for word in tokens]
-            counter.update(token.lower() for token in tokens if token not in string.punctuation)
-        return {word: i + 2 for i, (word, _) in enumerate(counter.most_common())}
+            tokens = self.preprocess_text(text)
+            counter.update(tokens)
+
+        # Создание словаря, исключая слова низкой с частотой
+        vocab = {word: i + 2 for i, (word, freq) in enumerate(counter.most_common()) if freq >= min_freq}
+
+        # Добавление специальных токенов
+        vocab['<pad>'] = 0
+        vocab['<unk>'] = 1
+
+        return vocab
 
     def preprocess_text(self, text):
         # Предобработка текста
@@ -57,10 +59,19 @@ class TextDataset(Dataset):
         tokens = [self.stemmer.stem(token) for token in tokens]
         return tokens
 
+    def get_text_lengths(self):
+        lengths = []
+        for text in self.texts:
+            tokens = self.preprocess_text(text)
+            lengths.append(len(tokens))
+        return lengths
+
     def encode_text(self, text):
-        # Кодирование текста в последовательность индексов
         tokens = self.preprocess_text(text)
-        return torch.tensor([self.vocab.get(token, 1) for token in tokens], dtype=torch.long)
+        max_length = 150
+        if len(tokens) > max_length:
+            tokens = tokens[:max_length]
+        return torch.tensor([self.vocab.get(token, self.vocab['<unk>']) for token in tokens], dtype=torch.long)
 
     def __len__(self):
         return len(self.texts)
@@ -84,25 +95,33 @@ labels_one_hot[range(len(labels)), labels] = 1
 dataset = TextDataset(texts, labels_one_hot)
 
 
+import matplotlib.pyplot as plt
+
+lengths = dataset.get_text_lengths()
+plt.figure(figsize=(10, 6))
+plt.hist(lengths, bins=50)
+plt.xlabel('Длина текста')
+plt.ylabel('Частотность')
+plt.title('Распределение длин текстов')
+# plt.show()
+
+most_common_length = max(set(lengths), key=lengths.count)
+print(f'Most common text length: {most_common_length}')
+
+
 # Гиперпараметры модели
-vocab_size = len(dataset.vocab) + 2  # +2 for <pad> and <unk> tokens
-embed_dim = 128  # размерность векторных представлений слов
-num_classes = len(categories)  # количество классов (категорий)
+vocab_size = len(dataset.vocab)
+embed_dim = 128
+num_classes = len(categories)
 
 num_filters = 256
-filter_sizes = [2, 3, 4]
+filter_sizes = [2, 2, 2, 2, 2]
 
-num_layers = 5  # количество слоев RNN
-bidirectional = True  # использовать двунаправленную RNN
-dropout = 0  # вероятность применения dropout
-
-# Создание экземпляра модели
-# model = AttentionRNN(vocab_size, embed_dim, hidden_dim, num_classes).to(device)
 model = TextCNN(vocab_size, embed_dim, num_classes, num_filters, filter_sizes).to(device)
 
 batch_size = 8
 learning_rate = 0.001
-num_epochs = 5
+num_epochs = 10
 
 # Разделение датасета
 train_data, val_data = train_test_split(dataset, test_size=0.1)
@@ -120,11 +139,10 @@ def collate_batch(batch):
 train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, collate_fn=collate_batch)
 val_loader = DataLoader(val_data, batch_size=batch_size, collate_fn=collate_batch)
 
-
 # Оптимизатор и функция потерь
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 criterion = nn.BCEWithLogitsLoss()
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
 
 for epoch in range(num_epochs):
     model.train()

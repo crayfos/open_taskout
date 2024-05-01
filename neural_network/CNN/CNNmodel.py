@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class TextCNN(nn.Module):
     def __init__(self, vocab_size, embed_dim, num_classes, num_filters, filter_sizes):
         super(TextCNN, self).__init__()
@@ -10,7 +9,7 @@ class TextCNN(nn.Module):
         self.convs = nn.ModuleList(
             [nn.Conv1d(in_channels=embed_dim, out_channels=num_filters, kernel_size=fs) for fs in filter_sizes]
         )
-        self.dropout = nn.Dropout(0.3)
+        self.dropout = nn.Dropout(0.5)
         self.fc = nn.Linear(num_filters * len(filter_sizes), num_classes)
 
     def forward(self, x):

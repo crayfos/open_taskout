@@ -36,7 +36,7 @@ WITH numbered_rows AS (
 )
 SELECT title, description, category_id
 FROM numbered_rows
-WHERE row_num <= 400
+WHERE row_num <= 500
 ORDER BY category_id;
 """
 
