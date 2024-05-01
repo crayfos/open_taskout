@@ -84,21 +84,21 @@ def get_tasks(category, page):
     cur = conn.cursor()
     if category == 'all':
         cur.execute(
-            "SELECT tasks.*, statuses.status_name, categories.category_name, processing_id FROM tasks "
-            "JOIN task_processing ON tasks.task_id = task_processing.task_id "
-            "JOIN categories ON categories.category_id = task_processing.category "
-            "JOIN statuses ON task_processing.status = statuses.status_id "
-            "ORDER BY tasks.published_date DESC "
-            "LIMIT %s OFFSET %s", (tasks_per_page, offset))
+            '''SELECT tasks.*, statuses.status_name, categories.category_name, processing_id FROM tasks
+            JOIN task_processing ON tasks.task_id = task_processing.task_id
+            JOIN categories ON categories.category_id = task_processing.category
+            JOIN statuses ON task_processing.status = statuses.status_id
+            ORDER BY tasks.published_date DESC
+            LIMIT %s OFFSET %s''', (tasks_per_page, offset))
     else:
         cur.execute(
-            "SELECT tasks.*, statuses.status_name, categories.category_name, processing_id FROM tasks "
-            "JOIN task_processing ON tasks.task_id = task_processing.task_id "
-            "JOIN categories ON categories.category_id = task_processing.category "
-            "JOIN statuses ON task_processing.status = statuses.status_id "
-            "WHERE task_processing.category = %s "
-            "ORDER BY tasks.published_date DESC "
-            "LIMIT %s OFFSET %s", (category, tasks_per_page, offset))
+            '''SELECT tasks.*, statuses.status_name, categories.category_name, processing_id FROM tasks
+            JOIN task_processing ON tasks.task_id = task_processing.task_id
+            JOIN categories ON categories.category_id = task_processing.category
+            JOIN statuses ON task_processing.status = statuses.status_id
+            WHERE task_processing.category = %s
+            ORDER BY tasks.published_date DESC
+            LIMIT %s OFFSET %s''', (category, tasks_per_page, offset))
     tasks = cur.fetchall()
 
     tasks_list = []

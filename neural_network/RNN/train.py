@@ -90,7 +90,7 @@ embed_dim = 128  # размерность векторных представл�
 num_classes = len(categories)  # количество классов (категорий)
 
 num_filters = 256
-filter_sizes = [3, 4, 5]
+filter_sizes = [2, 3, 4]
 
 num_layers = 5  # количество слоев RNN
 bidirectional = True  # использовать двунаправленную RNN
@@ -100,9 +100,9 @@ dropout = 0  # вероятность применения dropout
 # model = AttentionRNN(vocab_size, embed_dim, hidden_dim, num_classes).to(device)
 model = TextCNN(vocab_size, embed_dim, num_classes, num_filters, filter_sizes).to(device)
 
-batch_size = 16
+batch_size = 8
 learning_rate = 0.001
-num_epochs = 10
+num_epochs = 5
 
 # Разделение датасета
 train_data, val_data = train_test_split(dataset, test_size=0.1)
@@ -124,7 +124,7 @@ val_loader = DataLoader(val_data, batch_size=batch_size, collate_fn=collate_batc
 # Оптимизатор и функция потерь
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 criterion = nn.BCEWithLogitsLoss()
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5)
 
 for epoch in range(num_epochs):
     model.train()
