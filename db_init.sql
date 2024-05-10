@@ -30,6 +30,7 @@ CREATE TABLE task_processing (
     processing_id SERIAL PRIMARY KEY,
     task_id INT UNIQUE NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
     category INT REFERENCES categories(category_id),
+    neuro_confidence smallint NOT NULL DEFAULT 0,
     status INT NOT NULL REFERENCES statuses(status_id),
     category_change_date TIMESTAMP WITH TIME ZONE NOT NULL
 );

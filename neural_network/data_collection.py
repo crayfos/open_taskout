@@ -13,10 +13,13 @@ from sklearn.preprocessing import LabelEncoder
 
 import pandas as pd
 
+
+from sklearn.model_selection import train_test_split
+
 # Функция для очистки текста от HTML-тегов
 def clean_html(raw_html):
     cleanr = re.compile('<.*?>')
-    cleantext = re.sub(cleanr, '', raw_html)
+    cleantext = re.sub(cleanr, ' ', raw_html)
     return cleantext
 
 
@@ -101,9 +104,17 @@ labels_one_hot[range(len(labels)), labels] = 1
 
 print(texts[0])
 
-# Создание DataFrame
-df = pd.DataFrame({'Texts': texts, 'Labels': labels})
+train_texts, test_texts, train_labels, test_labels = train_test_split(texts, labels, test_size=0.1)
 
-# Сохранение DataFrame в CSV
-df.to_csv('data.csv', index=False)
+# Сортировка
+train_texts, train_labels = zip(*sorted(zip(train_texts, train_labels), key=lambda x: x[1]))
+test_texts, test_labels = zip(*sorted(zip(test_texts, test_labels), key=lambda x: x[1]))
+
+# Сохранение
+df = pd.DataFrame({'Texts': train_texts, 'Labels': train_labels})
+df.to_csv('train_data.csv', index=False)
+
+df = pd.DataFrame({'Texts': test_texts, 'Labels': test_labels})
+df.to_csv('test_data.csv', index=False)
+
 
