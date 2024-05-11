@@ -69,7 +69,7 @@ def get_tasks_json(url):
             'https': proxy
         }
         try:
-            response = requests.get(url, headers=headers, proxies=proxies, timeout=5)
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=15)
             script_data = get_script_json_data(response.text)
             script_data = script_data['wantsListData']['wants']
 
@@ -155,10 +155,9 @@ def producer(retries=5):
             page_number += 1
         elif links and links[0] == 'error':
             retries -= 1
-            print(f"Повторная попытка {retries} для URL {url}page-{page_number}/")
+            print(f"Повторная попытка {retries} для URL {url}&page={page_number}/")
         else:
             depth += 1
-    print(f"Список новых заданий получен")
     producer_finished_event.set()
 
 def save_task_to_db(task_details):
@@ -271,7 +270,7 @@ tasks_counter = 0
 def start_kwork_parser():
     global tasks_counter
     producer_finished_event.clear()
-    producer_thread = threading.Thread(target=producer, args=(categories_info,))
+    producer_thread = threading.Thread(target=producer)
     producer_thread.start()
 
     # Запускаем рабочие потоки потребителей
