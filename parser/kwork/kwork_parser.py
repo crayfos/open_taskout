@@ -12,111 +12,149 @@ from requests.exceptions import Timeout, ConnectionError, RequestException
 
 import psycopg2
 from web.db_config import db_params
-from web.parser.habr.habr_categories import categories_info
+from web.parser.kwork.kwork_categories import categories_info
+
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.proxy import Proxy, ProxyType
+from selenium.common.exceptions import TimeoutException
+from webdriver_manager.chrome import ChromeDriverManager
+import json
+
+from fp.fp import FreeProxy
 
 locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+}
 
+def get_proxy():
+    try:
+        proxy = FreeProxy(timeout=1, https=True, rand=True).get()
+        while not check_proxy(proxy):
+            proxy = FreeProxy(timeout=1, https=True).get()
+        print(f"Используем прокси {proxy}")
+        return proxy
+    except Exception as e:
+        print(f"Не удалось получить прокси: {e}")
+        return None
+
+def check_proxy(proxy_url):
+    try:
+        response = requests.get('https://kwork.ru/projects', proxies={'http': proxy_url, 'https': proxy_url}, timeout=5)
+        if response.status_code == 200 and response.content:
+            return True
+        else:
+            return False
+    except requests.exceptions.ProxyError:
+        print(f'Прокси {proxy_url} не работает. Ошибка прокси.')
+        return False
+    except requests.exceptions.ConnectTimeout:
+        print(f'Прокси {proxy_url} не работает. Превышено время ожидания.')
+        return False
+    except requests.exceptions.RequestException as e:
+        print(f'Прокси {proxy_url} не работает. Ошибка: {e}')
+        return False
 
 def url_exists_in_db(url, cursor):
     cursor.execute('SELECT EXISTS(SELECT 1 FROM tasks WHERE url=%s)', (url,))
     return cursor.fetchone()[0]
 
-
+proxy = get_proxy()
 def get_task_links(url):
     task_links = []
     conn = psycopg2.connect(**db_params)
     cursor = conn.cursor()
-    try:
-        response = requests.get(url, timeout=5)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        tasks = soup.find_all('article', class_='task')
-        for task in tasks:
-            title_element = task.find('div', class_='task__title')
-            link = 'https://freelance.habr.com' + title_element.find('a')['href']
-            if not url_exists_in_db(link, cursor):
-                task_links.append(link)
-        return task_links
-    except (Timeout, ConnectionError) as e:
-        print(f"Возникла ошибка при подключении к {url}: {e}")
-    except RequestException as e:
-        print(f"Произошла ошибка при запросе к {url}: {e}")
-    finally:
-        cursor.close()
-        conn.close()
-    return ['error']
+    while True:
+        try:
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+
+            chrome_options.add_argument(f'--proxy-server={proxy}')
+
+            # Инициализация драйвера Selenium
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+
+            driver.get(url)
+            # Ожидание загрузки элементов на странице
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_all_elements_located((By.CLASS_NAME, 'wants-card__header-title'))
+            )
+
+            # Получение данных с помощью Selenium
+            tasks = driver.find_elements(By.CLASS_NAME, 'wants-card__header-title')
+            for task in tasks:
+                link = task.find_element(By.TAG_NAME, 'a').get_attribute('href')
+                if not url_exists_in_db(link, cursor):
+                    task_links.append(link)
+            driver.quit()
+            break
+        except TimeoutException as e:
+            print(f"Превышено время ожидания элементов на странице {url}: {e}")
+            driver.quit()
+            global proxy
+            proxy = get_proxy()  # Получаем новый прокси и повторяем попытку
+        except (ConnectionError, RequestException) as e:
+            print(f"Возникла ошибка при подключении к {url}: {e}")
+            driver.quit()
+            break
+        finally:
+            cursor.close()
+            conn.close()
+    return task_links if task_links else ['error']
 
 
-def get_published_date(meta_string):
-    # Словарь для замены русского названия месяца на число
-    months = {
-        'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04',
-        'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08',
-        'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12'
-    }
-
-    date_match = re.search(r'\d{1,2} .+ \d{4}, \d{2}:\d{2}', meta_string)
-    if date_match:
-        # Получаем строку даты из регулярного выражения
-        published_date_str = date_match.group(0)
-
-        # Заменяем русское название месяца на численное значение
-        for rus_month, num_month in months.items():
-            if rus_month in published_date_str:
-                published_date_str = published_date_str.replace(rus_month, num_month)
-                break
-
-        # Преобразуем строку даты в объект datetime
-        published_date = datetime.strptime(published_date_str, '%d %m %Y, %H:%M')
-        # Преобразуем в строку в формате ISO для PostgreSQL
-        return published_date.strftime('%Y-%m-%d %H:%M:%S')
+def get_script_json_data(html_content):
+    pattern = re.compile(r'window\.stateData\s*=\s*(\{.*?\});</script>', re.DOTALL)
+    match = pattern.search(html_content)
+    if match:
+        json_data = match.group(1)
+        json_data = json_data.replace('</span>', '')
+        data = json.loads(json_data)
+        return data
     return None
 
-
-def parse_price(price_str):
-    price_type_id = 1
-    price = None
-    if 'руб.' in price_str:
-        if 'за проект' in price_str:
-            price_type_id = 3  # За проект
-        elif 'за час' in price_str:
-            price_type_id = 2  # За час
-
-        price_str = re.sub(r'[^0-9]', '', price_str)
-        price = int(price_str) if price_str else None
-
-    return price, price_type_id
-
-
 def get_task_details(task_url):
-    response = requests.get(task_url, timeout=5)
+    response = requests.get(task_url, headers=headers, timeout=5)
     soup = BeautifulSoup(response.text, 'html.parser')
 
-    title = soup.find('h2', class_='task__title').get_text(separator=' ', strip=True)
-    price_str = soup.find('div', class_='task__finance').get_text(strip=True)
-    price, price_type_id = parse_price(price_str)
+    # Используем функцию для извлечения данных из скрипта
+    script_data = get_script_json_data(response.text)
+    if script_data:
+        title = script_data['wantData']['name']
+        description = script_data['wantData']['wantClearedDescription']
 
-    meta = soup.find('div', class_='task__meta').get_text(strip=True)
-    published_date = get_published_date(meta)
+        price = float(script_data['wantData']['price_limit'])
+        max_price = float(script_data['wantData']['wantGetPossiblePriceLimit'])
+        price_range_type = 1
+        if price != max_price:
+            price_range_type = 2
+            price = max_price
+        price_type_id = 3
 
-    description = str(soup.find('div', class_='task__description'))
-    description = re.sub(r'<(?!br\/*\b|\/*a\b)[^>]+>', '<br>', description)
-    description = re.sub(r'\xa0|&nbsp;|^\n*\s+|\s+\n*$', '', description)
-    description = re.sub(r'(<br\/?>\s*){3,}', '<br><br><br>', description)
+        published_date = datetime.strptime(script_data['wantData']['date_create'], '%Y-%m-%d %H:%M:%S')
+        published_date = published_date.strftime('%Y-%m-%d %H:%M:%S')
 
-    range_type = 1
-    task_details = {
-        'url': task_url,
-        'title': title,
-        'description': description,
-        'price': price,
-        'price_range_type': range_type,
-        'price_type_id': price_type_id,
-        'published_date': published_date,
-        'standard_category': '',
-        'standard_subcategory': ''
-    }
+        task_details = {
+            'url': task_url,
+            'title': title,
+            'description': description,
+            'price': price,
+            'price_range_type': price_range_type,
+            'price_type_id': price_type_id,
+            'published_date': published_date,
+            'standard_category': '',
+            'standard_subcategory': ''
+        }
 
-    return task_details
+        return task_details
+    return None
 
 
 task_queue = queue.Queue()
@@ -212,17 +250,17 @@ def consumer(retry_limit=3, delay_between_retries=5):
             task_info['standard_category'] = category
             task_info['standard_subcategory'] = subcategory
 
-            # Выводим и сохраняем информацию о задании
-            # with print_lock:
-            #     print(task_info)
-            new_task = save_task_to_db(task_info)
-            if new_task is not None:
-                save_task_processing(new_task, deep_category)
+            with print_lock:
+                print(task_info)
+            # new_task = save_task_to_db(task_info)
+            # if new_task is not None:
+            #     save_task_processing(new_task, deep_category)
             tasks_data.append(task_info)
             if retries > 0:
                 with print_lock:
                     print(f"Ссылка {link} обработана с попытки {retries}")
             task_queue.task_done()
+
         except queue.Empty:
             time.sleep(10)
             if producer_finished_event.is_set():

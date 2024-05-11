@@ -245,12 +245,13 @@ def consumer(retry_limit=3, delay_between_retries=5):
             if retries > 0:
                 with print_lock:
                     print(f"Ссылка {link} обработана с попытки {retries}")
-
+            task_queue.task_done()
         except queue.Empty:
             time.sleep(10)
-            producer_finished_event.wait()
-            if task_queue.empty():
+            if producer_finished_event.is_set():
                 return
+            else:
+                continue
 
         except Exception as e:
             with print_lock:
@@ -263,8 +264,6 @@ def consumer(retry_limit=3, delay_between_retries=5):
             else:
                 with print_lock:
                     print(f"Достигнут лимит попыток для ссылки {link}")
-        finally:
-            task_queue.task_done()
 
 
 def start_fl_parser():
