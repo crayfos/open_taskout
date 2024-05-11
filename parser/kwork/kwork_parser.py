@@ -13,16 +13,8 @@ from requests.exceptions import Timeout, ConnectionError, RequestException
 import psycopg2
 from web.db_config import db_params
 from web.parser.kwork.kwork_categories import categories_info
+from web.parser.kwork.kwork_categories import subcategories_info
 
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.proxy import Proxy, ProxyType
-from selenium.common.exceptions import TimeoutException
-from webdriver_manager.chrome import ChromeDriverManager
 import json
 
 from fp.fp import FreeProxy
@@ -66,48 +58,36 @@ def url_exists_in_db(url, cursor):
     return cursor.fetchone()[0]
 
 proxy = get_proxy()
-def get_task_links(url):
-    task_links = []
+def get_tasks_json(url):
+    task_json = []
     conn = psycopg2.connect(**db_params)
     cursor = conn.cursor()
     while True:
+        global proxy
+        proxies = {
+            'http': proxy,
+            'https': proxy
+        }
         try:
-            chrome_options = Options()
-            chrome_options.add_argument("--headless")
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=5)
+            script_data = get_script_json_data(response.text)
+            script_data = script_data['wantsListData']['wants']
 
-            chrome_options.add_argument(f'--proxy-server={proxy}')
-
-            # Инициализация драйвера Selenium
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-
-            driver.get(url)
-            # Ожидание загрузки элементов на странице
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_all_elements_located((By.CLASS_NAME, 'wants-card__header-title'))
-            )
-
-            # Получение данных с помощью Selenium
-            tasks = driver.find_elements(By.CLASS_NAME, 'wants-card__header-title')
-            for task in tasks:
-                link = task.find_element(By.TAG_NAME, 'a').get_attribute('href')
+            for task in script_data:
+                link = 'https://kwork.ru/projects/' + str(task['id'])
                 if not url_exists_in_db(link, cursor):
-                    task_links.append(link)
-            driver.quit()
-            break
-        except TimeoutException as e:
-            print(f"Превышено время ожидания элементов на странице {url}: {e}")
-            driver.quit()
-            global proxy
-            proxy = get_proxy()  # Получаем новый прокси и повторяем попытку
-        except (ConnectionError, RequestException) as e:
-            print(f"Возникла ошибка при подключении к {url}: {e}")
-            driver.quit()
-            break
-        finally:
+                    task_json.append(task)
             cursor.close()
             conn.close()
-    return task_links if task_links else ['error']
+            break
+        except requests.exceptions.ProxyError:
+            print(f"Возникла ошибка при подключении к {url}")
+            proxy = get_proxy()
+            continue
+        except Exception as e:
+            print(f"Возникла ошибка при подключении к {url}: {e}")
+            continue
+    return task_json if task_json else ['error']
 
 
 def get_script_json_data(html_content):
@@ -120,72 +100,66 @@ def get_script_json_data(html_content):
         return data
     return None
 
-def get_task_details(task_url):
-    response = requests.get(task_url, headers=headers, timeout=5)
-    soup = BeautifulSoup(response.text, 'html.parser')
+def get_task_details(script_data):
+    title = script_data['name']
+    description = script_data['description'].replace('\n', '<br/>')
+    description = re.sub(r'(<br\/?>\s*){3,}', '<br><br><br>', description)
 
-    # Используем функцию для извлечения данных из скрипта
-    script_data = get_script_json_data(response.text)
-    if script_data:
-        title = script_data['wantData']['name']
-        description = script_data['wantData']['wantClearedDescription']
+    price = float(script_data['priceLimit'])
+    max_price = float(script_data['possiblePriceLimit'])
+    price_range_type = 1
+    if price != max_price:
+        price_range_type = 2
+        price = max_price
+    price_type_id = 3
 
-        price = float(script_data['wantData']['price_limit'])
-        max_price = float(script_data['wantData']['wantGetPossiblePriceLimit'])
-        price_range_type = 1
-        if price != max_price:
-            price_range_type = 2
-            price = max_price
-        price_type_id = 3
+    published_date = datetime.strptime(script_data['dateCreate'], '%Y-%m-%d %H:%M:%S')
+    published_date = published_date.strftime('%Y-%m-%d %H:%M:%S')
 
-        published_date = datetime.strptime(script_data['wantData']['date_create'], '%Y-%m-%d %H:%M:%S')
-        published_date = published_date.strftime('%Y-%m-%d %H:%M:%S')
+    standard_category = script_data['parentCategoryName']
+    standard_subcategory = script_data['categoryName']
 
-        task_details = {
-            'url': task_url,
-            'title': title,
-            'description': description,
-            'price': price,
-            'price_range_type': price_range_type,
-            'price_type_id': price_type_id,
-            'published_date': published_date,
-            'standard_category': '',
-            'standard_subcategory': ''
-        }
+    task_details = {
+        'url': 'https://kwork.ru/projects/' + str(script_data['id']),
+        'title': title,
+        'description': description,
+        'price': price,
+        'price_range_type': price_range_type,
+        'price_type_id': price_type_id,
+        'published_date': published_date,
+        'standard_category': standard_category,
+        'standard_subcategory': standard_subcategory
+    }
 
-        return task_details
-    return None
+    return task_details
+
 
 
 task_queue = queue.Queue()
 print_lock = threading.Lock()
 producer_finished_event = threading.Event()
 
+def producer(retries=5):
+    depth = 0
+    page_number = 1
+    url = 'https://kwork.ru/projects?c=all'
 
-def producer(categories_info, max_retries=5):
-    retries = {url: 0 for deep_category, category, subcategory, url in categories_info}
-    page_numbers = {url: 1 for deep_category, category, subcategory, url in categories_info}
-    categories_info_copy = categories_info.copy()
+    while depth < 3:
+        if retries == 0:
+            break
 
-    while categories_info_copy:
-        for deep_category, category, subcategory, url in list(categories_info_copy):
-            page_num = page_numbers[url]
-            if retries[url] < max_retries:
-                links = get_task_links(f"{url}&page={page_num}")
-                if links and links[0] != 'error':
-                    for link in links:
-                        task_queue.put((link, deep_category, category, subcategory, 0))
-                    page_numbers[url] += 1
-                elif links and links[0] == 'error':
-                    retries[url] += 1
-                    print(f"Повторная попытка {retries[url]} для URL {url}")
-                else:
-                    categories_info_copy.remove((deep_category, category, subcategory, url))
-            else:
-                print(f"Превышено максимальное количество попыток для {url}")
-                categories_info_copy.remove((deep_category, category, subcategory, url))
+        links = get_tasks_json(f"{url}&page={page_number}")
+        if links and links[0] != 'error':
+            for link in links:
+                task_queue.put((link, 0))
+            page_number += 1
+        elif links and links[0] == 'error':
+            retries -= 1
+            print(f"Повторная попытка {retries} для URL {url}page-{page_number}/")
+        else:
+            depth += 1
+    print(f"Список новых заданий получен")
     producer_finished_event.set()
-
 
 def save_task_to_db(task_details):
     conn = psycopg2.connect(**db_params)
@@ -220,11 +194,22 @@ def save_task_to_db(task_details):
 
 
 # Этот код предполагает, что функция save_task_to_db возвращает task_id новой задачи
-def save_task_processing(task_id, deep_category):
+def save_task_processing(task_id, task_info):
     conn = psycopg2.connect(**db_params)
     cursor = conn.cursor()
     try:
-        category_id = deep_category
+        category_id = 0
+        for subcategory_info in subcategories_info:
+            if (task_info['standard_category'] == subcategory_info[1] and
+                    task_info['standard_subcategory'] == subcategory_info[2]):
+                category_id = subcategory_info[0]
+        if category_id == 0:
+            for category_info in categories_info:
+                if task_info['standard_category'] == category_info[1]:
+                    category_id = category_info[0]
+        if category_id == 0:
+            category_id = 6
+
         status_id = 2
         insert_query = '''INSERT INTO task_processing (task_id, category, status, category_change_date)
                           VALUES (%s, %s, %s, %s)'''
@@ -243,24 +228,23 @@ def save_task_processing(task_id, deep_category):
 def consumer(retry_limit=3, delay_between_retries=5):
     while True:
         try:
-            link, deep_category, category, subcategory, retries = task_queue.get(timeout=10)
+            link, retries = task_queue.get(timeout=10)
 
             # Попытаемся получить детали задания
             task_info = get_task_details(link)
-            task_info['standard_category'] = category
-            task_info['standard_subcategory'] = subcategory
 
-            with print_lock:
-                print(task_info)
-            # new_task = save_task_to_db(task_info)
-            # if new_task is not None:
-            #     save_task_processing(new_task, deep_category)
-            tasks_data.append(task_info)
+            # with print_lock:
+            #     print(task_info)
+            new_task = save_task_to_db(task_info)
+            if new_task is not None:
+                save_task_processing(new_task, task_info)
+
+            global tasks_counter
+            tasks_counter += 1
             if retries > 0:
                 with print_lock:
                     print(f"Ссылка {link} обработана с попытки {retries}")
             task_queue.task_done()
-
         except queue.Empty:
             time.sleep(10)
             if producer_finished_event.is_set():
@@ -275,16 +259,17 @@ def consumer(retry_limit=3, delay_between_retries=5):
             if retries <= retry_limit:
                 # Планируем повторную попытку с задержкой
                 time.sleep(delay_between_retries)
-                task_queue.put((link, deep_category, category, subcategory, retries))
+                task_queue.put((link, retries))
             else:
                 with print_lock:
                     print(f"Достигнут лимит попыток для ссылки {link}")
 
 
-tasks_data = []
+tasks_counter = 0
 
 
-def start_habr_parser():
+def start_kwork_parser():
+    global tasks_counter
     producer_finished_event.clear()
     producer_thread = threading.Thread(target=producer, args=(categories_info,))
     producer_thread.start()
@@ -297,9 +282,9 @@ def start_habr_parser():
     concurrent.futures.wait(futures)
 
     # Выводим итоговую информацию
-    print(f"Обработано заданий: {len(tasks_data)}")
-    tasks_data.clear()
+    print(f"Обработано заданий: {tasks_counter}")
+    tasks_counter = 0
 
 
 if __name__ == "__main__":
-    start_habr_parser()
+    start_kwork_parser()

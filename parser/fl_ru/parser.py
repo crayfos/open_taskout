@@ -11,7 +11,7 @@ import requests
 from requests.exceptions import Timeout, ConnectionError, RequestException
 
 import psycopg2
-from web.parser.db_config import db_params
+from web.db_config import db_params
 from web.parser.fl_ru.fl_ru_categories import subcategories_info
 from web.parser.fl_ru.fl_ru_categories import categories_info
 
