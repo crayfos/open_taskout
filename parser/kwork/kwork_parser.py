@@ -25,9 +25,10 @@ headers = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 }
 
+
 def get_proxy():
     try:
-        proxy = FreeProxy(timeout=1, https=True, rand=True).get()
+        proxy = FreeProxy(timeout=1, https=True).get()
         while not check_proxy(proxy):
             proxy = FreeProxy(timeout=1, https=True).get()
         print(f"Используем прокси {proxy}")
@@ -35,6 +36,7 @@ def get_proxy():
     except Exception as e:
         print(f"Не удалось получить прокси: {e}")
         return None
+
 
 def check_proxy(proxy_url):
     try:
@@ -53,24 +55,30 @@ def check_proxy(proxy_url):
         print(f'Прокси {proxy_url} не работает. Ошибка: {e}')
         return False
 
+
 def url_exists_in_db(url, cursor):
     cursor.execute('SELECT EXISTS(SELECT 1 FROM tasks WHERE url=%s)', (url,))
     return cursor.fetchone()[0]
 
-proxy = get_proxy()
-def get_tasks_json(url):
+
+categories = {}
+
+
+def get_tasks_json(url, proxy):
     task_json = []
     conn = psycopg2.connect(**db_params)
     cursor = conn.cursor()
     while True:
-        global proxy
         proxies = {
-            'http': proxy,
-            'https': proxy
+            'http': proxy[0],
+            'https': proxy[0]
         }
         try:
             response = requests.get(url, headers=headers, proxies=proxies, timeout=15)
             script_data = get_script_json_data(response.text)
+            global categories
+            if categories == {}:
+                categories = script_data['categories']
             script_data = script_data['wantsListData']['wants']
 
             for task in script_data:
@@ -82,12 +90,12 @@ def get_tasks_json(url):
             break
         except requests.exceptions.ProxyError:
             print(f"Возникла ошибка при подключении к {url}")
-            proxy = get_proxy()
+            proxy[0] = get_proxy()
             continue
         except Exception as e:
             print(f"Возникла ошибка при подключении к {url}: {e}")
             continue
-    return task_json if task_json else ['error']
+    return task_json if task_json else []
 
 
 def get_script_json_data(html_content):
@@ -100,9 +108,31 @@ def get_script_json_data(html_content):
         return data
     return None
 
+
+def get_standard_categories(category_id):
+    global categories
+    standard_category = None
+    standard_subcategory = None
+
+    for cat_id, cat_info in categories.items():
+        if 'cats' in cat_info:
+            for subcat in cat_info['cats']:
+                if subcat['CATID'] == category_id:
+                    standard_category = cat_info['name']
+                    standard_subcategory = subcat['name']
+                    return standard_category, standard_subcategory
+        if cat_id == category_id:
+            standard_category = cat_info['name']
+            break
+
+    return standard_category, standard_subcategory
+
+
 def get_task_details(script_data):
     title = script_data['name']
+    title = re.sub(r'\[:.*?\]|&.*?;', '', title)
     description = script_data['description'].replace('\n', '<br/>')
+    description = re.sub(r'\[:.*?\]|&.*?;', '', description)
     description = re.sub(r'(<br\/?>\s*){3,}', '<br><br><br>', description)
 
     price = float(script_data['priceLimit'])
@@ -113,11 +143,13 @@ def get_task_details(script_data):
         price = max_price
     price_type_id = 3
 
-    published_date = datetime.strptime(script_data['dateCreate'], '%Y-%m-%d %H:%M:%S')
+    published_date = datetime.strptime(script_data['date_create'], '%Y-%m-%d %H:%M:%S')
     published_date = published_date.strftime('%Y-%m-%d %H:%M:%S')
 
-    standard_category = script_data['parentCategoryName']
-    standard_subcategory = script_data['categoryName']
+    category_id = script_data['category_id']
+    standard_category, standard_subcategory = get_standard_categories(category_id)
+    # standard_category = script_data['parentCategoryName']
+    # standard_subcategory = script_data['categoryName']
 
     task_details = {
         'url': 'https://kwork.ru/projects/' + str(script_data['id']),
@@ -134,31 +166,35 @@ def get_task_details(script_data):
     return task_details
 
 
-
 task_queue = queue.Queue()
 print_lock = threading.Lock()
 producer_finished_event = threading.Event()
+
 
 def producer(retries=5):
     depth = 0
     page_number = 1
     url = 'https://kwork.ru/projects?c=all'
+    proxy = [get_proxy()]
 
     while depth < 3:
         if retries == 0:
             break
 
-        links = get_tasks_json(f"{url}&page={page_number}")
+        links = get_tasks_json(f"{url}&page={page_number}", proxy)
         if links and links[0] != 'error':
             for link in links:
                 task_queue.put((link, 0))
             page_number += 1
         elif links and links[0] == 'error':
             retries -= 1
-            print(f"Повторная попытка {retries} для URL {url}&page={page_number}/")
+            print(f"Повторная попытка {retries} для URL {url}&page={page_number}")
         else:
+            print(f"Новых заданий на URL {url}&page={page_number} больше нет")
             depth += 1
+            page_number += 1
     producer_finished_event.set()
+
 
 def save_task_to_db(task_details):
     conn = psycopg2.connect(**db_params)
@@ -224,7 +260,7 @@ def save_task_processing(task_id, task_info):
 
 
 # Функция consumer извлекает данные из очереди и обрабатывает каждую задачу
-def consumer(retry_limit=3, delay_between_retries=5):
+def consumer(retry_limit=3):
     while True:
         try:
             link, retries = task_queue.get(timeout=10)
@@ -253,11 +289,9 @@ def consumer(retry_limit=3, delay_between_retries=5):
 
         except Exception as e:
             with print_lock:
-                print(f"Ошибка при обработке ссылки {link}: {e}, попытка {retries}")
+                print(f"Ошибка {e} при обработке ссылки {link}, попытка {retries}")
             retries += 1
             if retries <= retry_limit:
-                # Планируем повторную попытку с задержкой
-                time.sleep(delay_between_retries)
                 task_queue.put((link, retries))
             else:
                 with print_lock:
@@ -274,8 +308,8 @@ def start_kwork_parser():
     producer_thread.start()
 
     # Запускаем рабочие потоки потребителей
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(consumer) for _ in range(10)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(consumer) for _ in range(2)]
 
     # Дождемся завершения всех потребителей
     concurrent.futures.wait(futures)
