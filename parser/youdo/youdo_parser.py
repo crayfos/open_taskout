@@ -1,5 +1,3 @@
-from bs4 import BeautifulSoup
-from datetime import datetime
 import re
 import locale
 
@@ -7,6 +5,7 @@ import queue
 import threading
 import concurrent.futures
 import time
+from datetime import datetime, timedelta
 import requests
 
 from web.db_config import db_params
@@ -31,11 +30,6 @@ headers = {
 def url_exists_in_db(url, cursor):
     cursor.execute('SELECT EXISTS(SELECT 1 FROM tasks WHERE url=%s)', (url,))
     return cursor.fetchone()[0]
-
-
-def get_published_date(date_string):
-    published_date = datetime.utcfromtimestamp(int(date_string) // 1000)
-    return published_date.strftime('%Y-%m-%d %H:%M:%S')
 
 
 def parse_price(price_str):
@@ -84,11 +78,14 @@ def get_task_details(task_id):
 
     # Обработка даты публикации
     published_timestamp = task_data.get('Dates', {}).get('CreationDate', 0)
-    published_date = datetime.utcfromtimestamp(published_timestamp // 1000).strftime('%Y-%m-%d %H:%M:%S')
+    published_date = datetime.utcfromtimestamp(published_timestamp // 1000) + timedelta(hours=3)
+    published_date = published_date.strftime('%Y-%m-%d %H:%M:%S')
 
     # Категория и подкатегория
     category = task_data.get('CategoryInfo', {}).get('Name', '').strip()
     subcategory = task_data.get('SubcategoryInfo', {}).get('Name', '').strip()
+
+    is_remote = task_data.get('City', '') is None
 
     task_details = {
         'url': f"https://youdo.com/t{task_id}",
@@ -99,7 +96,8 @@ def get_task_details(task_id):
         'price_type_id': price_type_id,
         'published_date': published_date,
         'standard_category': category,
-        'standard_subcategory': subcategory
+        'standard_subcategory': subcategory,
+        'is_remote': is_remote
     }
 
     return task_details
@@ -128,7 +126,6 @@ def producer(retries=5):
     cursor = conn.cursor()
 
     empty_count = 0
-    new_task_count = 0
 
     try:
         WebDriverWait(driver, 10).until(
@@ -136,6 +133,7 @@ def producer(retries=5):
         )
 
         while empty_count < 3:
+            new_task_count = 0
             tasks_items = driver.find_elements(By.XPATH, "//*[contains(@class, 'TasksList_list')]//*[contains(@class, "
                                                          "'TasksList_listItem') and not(contains(@class, "
                                                          "'TasksList_banner'))]")
@@ -145,9 +143,9 @@ def producer(retries=5):
                                                               "contains(@class, 'TasksList_titleWrapper'))]")
                 task_id = task_link[0].get_attribute('data-id')
                 url = f"https://youdo.com/t{task_id}"
-                if (not url in task_queue.queue) and (not url_exists_in_db(url, cursor)):
+                if (not task_id in task_queue.queue) and (not url_exists_in_db(url, cursor)):
                     new_task_count += 1
-                    task_queue.put((url, 0))
+                    task_queue.put((task_id, 0))
 
             if new_task_count == 0:
                 empty_count += 1
@@ -213,11 +211,17 @@ def save_task_processing(task_id, task_info):
     conn = psycopg2.connect(**db_params)
     cursor = conn.cursor()
     try:
-        category_id = 6
-        for category_info in categories_info:
-            if task_info['standard_category'] == category_info[1] \
-                    or task_info['standard_subcategory'] == category_info[1]:
-                category_id = category_info[0]
+        category_id = 0
+        if task_info['is_remote']:
+            for subcategory_info in categories_info:
+                if task_info['standard_subcategory'] == subcategory_info[1]:
+                    category_id = subcategory_info[0]
+            if category_id == 0:
+                for category_info in categories_info:
+                    if task_info['standard_category'] == category_info[1]:
+                        category_id = category_info[0]
+        if category_id == 0:
+            category_id = 6
 
         status_id = 2
         insert_query = '''INSERT INTO task_processing (task_id, category, status, category_change_date)
