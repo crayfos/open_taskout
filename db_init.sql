@@ -37,7 +37,7 @@ CREATE TABLE task_processing (
 
 CREATE TABLE complaints (
     complaint_id SERIAL PRIMARY KEY,
-    processing_id INT NOT NULL REFERENCES task_processing(processing_id),
+    processing_id INT NOT NULL REFERENCES task_processing(processing_id) ON DELETE CASCADE,
     user_proposed_category INT REFERENCES categories(category_id),
     complaint_status smallint NOT NULL DEFAULT 0,
     complaint_date TIMESTAMP WITH TIME ZONE NOT NULL
@@ -47,3 +47,5 @@ CREATE TABLE complaints (
 INSERT INTO price_types (price_type_name) VALUES ('договорная'), ('за час'), ('за проект');
 INSERT INTO statuses (status_name) VALUES ('unfilled'), ('automatic'), ('neural_network'), ('manual');
 INSERT INTO categories (category_name) VALUES ('Разработка'), ('Дизайн'), ('Контент'), ('Маркетинг'), ('Бизнес'), ('Другое');
+
+CREATE UNIQUE INDEX idx_unique_title_description ON tasks (MD5(title), MD5(description));
