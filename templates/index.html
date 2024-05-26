@@ -21,6 +21,10 @@
                 <div class="CategoryCount">{{ category[3] }}/{{ category[2] }}</div>
             </a>
         {% endfor %}
+        <form action="/search/" method="get">
+            <input type="text" name="search_query" placeholder="Поиск заданий...">
+            <button type="submit">Поиск</button>
+        </form>
     </div>
 
     <div id="task-container">
@@ -34,6 +38,8 @@
                         <img class="profile" src="/static/images/avatars/fl_ru.png" alt="Profile Picture" />
                     {% elif 'kwork.ru' in task['task_link'] %}
                         <img class="profile" src="/static/images/avatars/kwork.jpg" alt="Profile Picture" />
+                    {% elif 'youdo' in task['task_link'] %}
+                        <img class="profile" src="/static/images/avatars/youdo.png" alt="Profile Picture" />
                     {% endif %}
                     <div class="text">
                         <div class="heading">

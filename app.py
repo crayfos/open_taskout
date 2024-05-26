@@ -61,44 +61,56 @@ def get_categories():
     conn = psycopg2.connect(**db_params)
     cur = conn.cursor()
     cur.execute(
-        "SELECT categories.category_id, categories.category_name, COUNT(tasks.task_id), "
-        "(SELECT COUNT(*) FROM task_processing tp WHERE tp.category = categories.category_id AND tp.status = 4) AS "
-        "status_4_task_count,"
-        "(SELECT COUNT(task_processing.task_id) FROM task_processing) AS total_task_count "
-        "FROM categories "
-        "LEFT JOIN task_processing ON categories.category_id = task_processing.category "
-        "LEFT JOIN tasks ON tasks.task_id = task_processing.task_id "
-        "GROUP BY categories.category_id "
-        "ORDER BY categories.category_id ASC "
+        '''
+        SELECT categories.category_id, categories.category_name, COUNT(tasks.task_id),
+        (SELECT COUNT(*) FROM task_processing tp WHERE tp.category = categories.category_id AND tp.status = 4) AS
+        status_4_task_count,
+        (SELECT COUNT(task_processing.task_id) FROM task_processing) AS total_task_count
+        FROM categories
+        LEFT JOIN task_processing ON categories.category_id = task_processing.category
+        LEFT JOIN tasks ON tasks.task_id = task_processing.task_id
+        GROUP BY categories.category_id
+        ORDER BY categories.category_id ASC
+        '''
     )
     categories = cur.fetchall()
     conn.close()
     return categories
 
 
-def get_tasks(category, page):
+def get_tasks(category, page, search_query=None):
     process_complaints()
     tasks_per_page = 30
     offset = (page - 1) * tasks_per_page
     conn = psycopg2.connect(**db_params)
     cur = conn.cursor()
+
+    search_condition = ""
+    search_params = []
+    if search_query:
+        search_query = f"%{search_query}%"
+        search_condition = "AND (tasks.title ILIKE %s OR tasks.description ILIKE %s)"
+        search_params = [search_query, search_query]
+
     if category == 'all':
         cur.execute(
             '''SELECT tasks.*, statuses.status_name, categories.category_name, processing_id FROM tasks
             JOIN task_processing ON tasks.task_id = task_processing.task_id
             JOIN categories ON categories.category_id = task_processing.category
             JOIN statuses ON task_processing.status = statuses.status_id
+            WHERE 1=1 ''' + search_condition + '''
             ORDER BY tasks.published_date DESC
-            LIMIT %s OFFSET %s''', (tasks_per_page, offset))
+            LIMIT %s OFFSET %s''', search_params + [tasks_per_page, offset])
     else:
         cur.execute(
             '''SELECT tasks.*, statuses.status_name, categories.category_name, processing_id FROM tasks
             JOIN task_processing ON tasks.task_id = task_processing.task_id
             JOIN categories ON categories.category_id = task_processing.category
             JOIN statuses ON task_processing.status = statuses.status_id
-            WHERE task_processing.category = %s
+            WHERE task_processing.category = %s AND url LIKE %s''' + search_condition + '''
             ORDER BY tasks.published_date DESC
-            LIMIT %s OFFSET %s''', (category, tasks_per_page, offset))
+            LIMIT %s OFFSET %s''', [category, '%%'] + search_params + [tasks_per_page, offset])
+
     tasks = cur.fetchall()
 
     tasks_list = []
@@ -142,6 +154,20 @@ def index_page(page):
 def index():
     return category_index('all', 1)
 
+
+@app.route('/search/<search_query>/')
+@app.route('/search/<search_query>/<int:page>')
+def search_tasks(search_query, page=1):
+    categories = get_categories()
+    tasks = get_tasks('all', page, search_query)
+    return render_template('index.html', tasks=tasks, categories=categories, current_category='all', current_page=page)
+
+
+@app.route('/search/', methods=['GET'])
+def search():
+    search_query = request.args.get('search_query', '')
+    page = request.args.get('page', 1, type=int)
+    return search_tasks(search_query, page)
 
 @app.route('/submit_complaint', methods=['POST'])
 def submit_complaint():
