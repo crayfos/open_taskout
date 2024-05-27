@@ -2,18 +2,15 @@ import pandas as pd
 import gc
 import torch
 from torch.nn.utils.rnn import pad_sequence
-import torch.nn as nn
+
 from transformers import AutoTokenizer, BertForSequenceClassification
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 from torch.utils.data import Dataset, DataLoader
 from tqdm.auto import tqdm, trange
+
 import numpy as np
-from sklearn.metrics import roc_auc_score, precision_recall_fscore_support
-from IPython.display import display
-import string
 import re
-from torch.nn import BCEWithLogitsLoss
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
@@ -27,7 +24,6 @@ model = BertForSequenceClassification.from_pretrained("cointegrated/rubert-tiny2
                                                       problem_type='multi_label_classification').to(device)
 model.config.label2id = {label: i for i, label in enumerate(LABELS)}
 model.config.id2label = {i: label for i, label in enumerate(LABELS)}
-# model.loss_fct = BCEWithLogitsLoss()
 
 # Датасет
 class TextDataset(Dataset):
@@ -155,9 +151,8 @@ dev_dataloader = DataLoader(val_data, batch_size=batch_size, drop_last=False, sh
 f1 = calculate_f1(model, dev_dataloader)
 print(f'\n[epoch 0] val f1: {f1:.4f}\n\n')
 
-optimizer = torch.optim.AdamW(params=model.parameters(), lr=4e-4)
-scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: .6 ** epoch)
-# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=2, factor=0.2)
+optimizer = torch.optim.AdamW(params=model.parameters(), lr=5e-4)
+scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: .5 ** epoch)
 
 
 for epoch in trange(3):
