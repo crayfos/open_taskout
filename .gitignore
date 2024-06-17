@@ -3,3 +3,5 @@
 fix_bd.py
 **tests.py
 **freelance_bert/
+**freelance_bert_91checkpoint2/
+**text_cnn_model.pth

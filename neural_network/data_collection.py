@@ -1,22 +1,16 @@
 import psycopg2
 import re
 from collections import defaultdict
-
 from web.db_config import db_params
-
 import string
 from razdel import tokenize
 from nltk.corpus import stopwords
 from nltk.stem.snowball import SnowballStemmer
-import torch
 from sklearn.preprocessing import LabelEncoder
-
 import pandas as pd
-
-
 from sklearn.model_selection import train_test_split
 
-# Функция для очистки текста от HTML-тегов
+
 def clean_html(raw_html):
     cleanr = re.compile('<.*?>')
     cleantext = re.sub(cleanr, ' ', raw_html)
@@ -26,7 +20,6 @@ def clean_html(raw_html):
 conn = psycopg2.connect(**db_params)
 cur = conn.cursor()
 
-# SQL-запрос для получения данных
 query = """
 WITH numbered_rows AS (
     SELECT t.title, t.description, c.category_id,
@@ -43,24 +36,22 @@ WHERE row_num <= 1000
 ORDER BY category_id;
 """
 
-# Выполняем запрос и обрабатываем данные
 cur.execute(query)
 data = defaultdict(list)
 
 for title, description, category in cur.fetchall():
-    # Очищаем описание от HTML-тегов
     description = clean_html(description) if description else ''
-    # Объединяем заголовок и описание
     text = f"{title} {description}".strip()
-    # Добавляем в словарь по категориям
     data[category].append(text)
 
-# Закрываем соединение с базой данных
 cur.close()
 conn.close()
 
 print(data.keys())
 arr = data[1]
+
+
+# ТЕСТИРОВАНИЕ ПРЕДОБРАБОТКИ
 
 # Токенизация
 tokens = list(tokenize(arr[0]))
@@ -83,6 +74,7 @@ print(tokens)
 
 
 
+
 # Обработка для TextDataset
 categories = list(data.keys())
 label_encoder = LabelEncoder()
@@ -97,12 +89,8 @@ for category, text_list in data.items():
         texts.append(text)
         labels.append(label_encoder.transform([category])[0])
 
-# Преобразование меток в one-hot encoding
-num_classes = len(categories)
-labels_one_hot = torch.zeros((len(labels), num_classes))
-labels_one_hot[range(len(labels)), labels] = 1
 
-print(texts[0])
+
 
 train_texts, test_texts, train_labels, test_labels = train_test_split(texts, labels, test_size=0.1)
 
@@ -116,5 +104,3 @@ df.to_csv('train_data.csv', index=False)
 
 df = pd.DataFrame({'Texts': test_texts, 'Labels': test_labels})
 df.to_csv('test_data.csv', index=False)
-
-

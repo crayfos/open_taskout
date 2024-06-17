@@ -1,150 +1,77 @@
-import pandas as pd
-import gc
 import torch
-from torch.nn.utils.rnn import pad_sequence
 
-from transformers import AutoTokenizer, BertForSequenceClassification
-from sklearn.metrics import accuracy_score, f1_score, classification_report
-from torch.utils.data import Dataset, DataLoader
+from transformers import AddedToken
 from tqdm.auto import tqdm, trange
 
-import numpy as np
-import re
+from models import classification_bert
+from utils import utils, tokens, dataset, evaluation
+import config
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
 
-LABELS = ['разработка', 'дизайн', 'контент', 'маркетинг', 'бизнес', 'другое']
+print(config.device)
 
-# RuBERT Tiny токенизатор и модель
-tokenizer = AutoTokenizer.from_pretrained("cointegrated/rubert-tiny2")
-model = BertForSequenceClassification.from_pretrained("cointegrated/rubert-tiny2", num_labels=len(LABELS),
-                                                      problem_type='multi_label_classification').to(device)
-model.config.label2id = {label: i for i, label in enumerate(LABELS)}
-model.config.id2label = {i: label for i, label in enumerate(LABELS)}
+model, tokenizer = classification_bert.get_model_and_tokenizer(config.BERT_MODEL_NAME, config.LABELS)
 
-# Датасет
-class TextDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, model):
-        self.texts = texts
-        self.labels = labels
-        self.tokenizer = tokenizer
-        self.model = model
+# Загрузка данных
+train_texts, train_labels = utils.load_data('../train_data.csv')
+test_texts, test_labels = utils.load_data('../test_data.csv')
 
-    def __len__(self):
-        return len(self.texts)
 
-    def preprocess_text(self, text):
-        text = re.sub(r'\xa0|&nbsp;|\n|\t|\u2028', ' ', text)
-        text = text.lower()
-        return text
 
-    def __getitem__(self, idx):
-        text = str(self.texts[idx])
-        label = self.labels[idx]
+# Находим разбитые на части слова
+split_word_freq = tokens.find_split_words(train_texts, tokenizer)
 
-        text = self.preprocess_text(text)
-        tokens = self.tokenizer(text, padding=True, truncation=True, max_length=512, return_tensors='pt')
-        label_tensor = torch.nn.functional.one_hot(torch.tensor(label), num_classes=len(LABELS)).float()
+# Топ-10 самых частых слов
+top_10_words = sorted(split_word_freq.items(), key=lambda x: x[1], reverse=True)[:10]
+print("Top-10 most common split words:")
+for word, freq in top_10_words:
+    print(f"{word}: {freq}")
 
-        return {'input_ids': tokens['input_ids'].squeeze(0),
-                'attention_mask': tokens['attention_mask'].squeeze(0),
-                'labels': label_tensor}
+# Выбираем только те слова, которые встречаются больше порога
+most_common_split_words = [word for word, freq in split_word_freq.items() if freq > 30]
+
+# Добавление самых популярных слов в словарь токенизатора с атрибутом single_word
+new_tokens = [AddedToken(word, single_word=True) for word in most_common_split_words]
+num_added_tokens = tokenizer.add_special_tokens({'additional_special_tokens': new_tokens})
+print(f"Added {num_added_tokens} tokens")
+
+
+# Инициализация эмбеддингов для новых слов
+model.resize_token_embeddings(len(tokenizer))
+tokens.initialize_new_embeddings(model, tokenizer, most_common_split_words)
+
 
 
 # Загрузка данных
-df = pd.read_csv('../train_data.csv')
-train_texts, train_labels = df['Texts'].tolist(), df['Labels'].tolist()
-df = pd.read_csv('../test_data.csv')
-test_texts, test_labels = df['Texts'].tolist(), df['Labels'].tolist()
-
-train_dataset = TextDataset(train_texts, train_labels, tokenizer, model)
-test_dataset = TextDataset(test_texts, test_labels, tokenizer, model)
-
-train_data, val_data = train_dataset, test_dataset
-
-# Cleaning unnecessary data during training
-def cleanup():
-    gc.collect()
-    torch.cuda.empty_cache()
-
-cleanup()
-
-def calculate_f1(model, dataloader):
-    model.eval()
-    facts, preds = predict_with_model(model, dataloader)
-    preds = np.argmax(preds, axis=1)
-    facts = np.argmax(facts, axis=1)
-    f1 = f1_score(facts, preds, average='weighted')
-    return f1
-
-def calculate_validation_loss(model, validation_dataloader):
-    model.eval()
-    total_loss = 0.0
-    with torch.no_grad():
-        for batch in validation_dataloader:
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss
-            total_loss += loss.item()
-    return total_loss / len(validation_dataloader)
-
-def predict_with_model(model, dataloader, verbose=False):
-    preds = []
-    facts = []
-
-    tq = tqdm(dataloader) if verbose else dataloader
-
-    for batch in tq:
-        labels = batch['labels']
-        input_ids = batch['input_ids']
-        attention_mask = batch['attention_mask']
-
-        input_ids = input_ids.to(device)
-        attention_mask = attention_mask.to(device)
-        labels = labels.to(device)
-
-        facts.append(labels.cpu().numpy())
-
-        with torch.no_grad():
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            logits = outputs.logits
-            preds.append(torch.softmax(logits, dim=-1).cpu().numpy())
-
-    facts = np.concatenate(facts)
-    preds = np.concatenate(preds)
-    return facts, preds
+train_dataset = dataset.TextDataset(train_texts, train_labels, tokenizer, model)
+test_dataset = dataset.TextDataset(test_texts, test_labels, tokenizer, model)
 
 batch_size = 16
+train_dataloader, dev_dataloader = dataset.get_dataloader(batch_size, train_dataset, test_dataset)
 
-def collate_fn(batch):
-    input_ids = pad_sequence([item['input_ids'] for item in batch], batch_first=True)
-    attention_mask = pad_sequence([item['attention_mask'] for item in batch], batch_first=True)
-    labels = torch.stack([item['labels'] for item in batch])
-    return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
 
-train_dataloader = DataLoader(train_data, batch_size=batch_size, drop_last=False, shuffle=True, num_workers=0, collate_fn=collate_fn)
-dev_dataloader = DataLoader(val_data, batch_size=batch_size, drop_last=False, shuffle=False, num_workers=0, collate_fn=collate_fn)
+utils.cleanup()
 
-f1 = calculate_f1(model, dev_dataloader)
+
+# zero-shot классификация
+f1 = evaluation.calculate_f1(model, dev_dataloader)
 print(f'\n[epoch 0] val f1: {f1:.4f}\n\n')
 
-optimizer = torch.optim.AdamW(params=model.parameters(), lr=3e-4)
+
+# Обучение модели
+optimizer = torch.optim.AdamW(params=model.parameters(), lr=2e-4)
 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: .5 ** epoch)
 
-for epoch in trange(3):
+for epoch in trange(4):
     model.train()
-    cleanup()
+    utils.cleanup()
 
     print('LR:', scheduler.get_last_lr())
     tq = tqdm(train_dataloader, desc='Training', leave=False)
     for i, batch in enumerate(tq):
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['labels'].to(device)
+        input_ids = batch['input_ids'].to(config.device)
+        attention_mask = batch['attention_mask'].to(config.device)
+        labels = batch['labels'].to(config.device)
 
         outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
         loss = outputs.loss
@@ -155,13 +82,14 @@ for epoch in trange(3):
 
         tq.set_postfix(loss=loss.item())
 
-    val_loss = calculate_validation_loss(model, dev_dataloader)
+    val_loss = evaluation.calculate_validation_loss(model, dev_dataloader)
     scheduler.step()
 
-    f1 = calculate_f1(model, dev_dataloader)
+    f1 = evaluation.calculate_f1(model, dev_dataloader)
     print(f'\n[epoch {epoch + 1}] val f1: {f1:.4f}, val loss: {val_loss:.4f}\n\n')
 
-    model_path = "./freelance_bert"
-    model.save_pretrained(model_path)
-    tokenizer.save_pretrained(model_path)
+    model.save_pretrained(config.MODEL_PATH)
+    tokenizer.save_pretrained(config.MODEL_PATH)
     print(f'\n[epoch {epoch + 1}] model saved')
+
+utils.cleanup()

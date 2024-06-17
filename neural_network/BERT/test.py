@@ -1,111 +1,52 @@
-import torch
+import numpy as np
 import pandas as pd
-from transformers import AutoTokenizer, BertForSequenceClassification
-from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report
-from torch.nn.utils.rnn import pad_sequence
-import re
 from sklearn.metrics import confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
 from prettytable import PrettyTable
+from transformers import AutoTokenizer, BertForSequenceClassification
 
-# Define the device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Load pre-trained model and tokenizer
-model_path = "./freelance_bert"
-model = BertForSequenceClassification.from_pretrained(model_path)
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-model.to(device)
+from utils import utils, tokens, dataset, evaluation
+import config
 
 
-# Dataset class
-class TextDataset(torch.utils.data.Dataset):
-    def __init__(self, texts, labels, tokenizer, max_len=512):
-        self.texts = texts
-        self.labels = labels
-        self.tokenizer = tokenizer
-        self.max_len = max_len
+model = BertForSequenceClassification.from_pretrained(config.MODEL_PATH).to(config.device)
+tokenizer = AutoTokenizer.from_pretrained(config.MODEL_PATH)
 
-    def __len__(self):
-        return len(self.texts)
+# тест полученного токенизатора
+orig_tokenizer = AutoTokenizer.from_pretrained("cointegrated/rubert-tiny2")
+examples = [
+    "помощь в интеграции яндекс маркета здравствуйте! не получается сделать интеграцию. нужна помощь, тз прилагаю"
+]
 
-    def preprocess_text(self, text):
-        text = re.sub(r'\xa0|&nbsp;|\n|\t|\u2028', ' ', text)
-        text = text.lower()
+for example in examples:
+    print("Original text:", example)
+    print("Tokenized text:", tokenizer.tokenize(example))
+    print("Orig tokenized text:", orig_tokenizer.tokenize(example))
+    print()
 
-        # text = ''.join([char.lower() for char in text])
-        return text
+# Загрузка данных
+test_texts, test_labels = utils.load_data('../test_data.csv')
+test_dataset = dataset.TextDataset(test_texts, test_labels, tokenizer, model)
 
-    def __getitem__(self, idx):
-        text = str(self.texts[idx])
-        text = self.preprocess_text(text)
-        label = self.labels[idx]
-        encoding = self.tokenizer(
-            text,
-            add_special_tokens=True,
-            max_length=self.max_len,
-            return_token_type_ids=False,
-            padding='max_length',
-            truncation=True,
-            return_attention_mask=True,
-            return_tensors='pt',
-        )
+_, test_dataloader = dataset.get_dataloader(16, None, test_dataset)
 
-        return {
-            'input_ids': encoding['input_ids'].flatten(),
-            'attention_mask': encoding['attention_mask'].flatten(),
-            'labels': torch.tensor(label, dtype=torch.long)
-        }
+# Получение предсказаний
+true_labels, predictions, texts = evaluation.evaluate_model(model, test_dataloader, tokenizer)
 
+true_confidences = []
+pred_confidences = []
 
-# Collate function to pad sequences dynamically
-def collate_fn(batch):
-    input_ids = pad_sequence([item['input_ids'] for item in batch], batch_first=True)
-    attention_mask = pad_sequence([item['attention_mask'] for item in batch], batch_first=True)
-    labels = torch.stack([item['labels'] for item in batch])
-    return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
+true_labels = np.argmax(true_labels, axis=1)
 
+# Вычисление вероятностей
+for true_label, pred in zip(true_labels, predictions):
+    true_confidences.append(pred[true_label])
+    pred_confidences.append(np.max(pred))
 
-# Load test data
-df = pd.read_csv('../train_data.csv')
-test_texts = df['Texts'].tolist()
-test_labels = df['Labels'].tolist()
-test_dataset = TextDataset(test_texts, test_labels, tokenizer)
-test_dataloader = DataLoader(test_dataset, batch_size=32, collate_fn=collate_fn)
+predictions = np.argmax(predictions, axis=1)
 
-
-# Evaluate the model
-def evaluate_model(model, dataloader):
-    model.eval()
-    true_labels = []
-    predictions = []
-    true_confidences = []
-    pred_confidences = []
-    texts = []
-
-    with torch.no_grad():
-        for batch in dataloader:
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            logits = outputs.logits
-
-            probs = torch.nn.functional.softmax(logits, dim=-1)
-            _, preds = torch.max(probs, dim=1)
-
-            true_labels.extend(labels.cpu().numpy())
-            predictions.extend(preds.cpu().numpy())
-            true_confidences.extend(probs[range(len(labels)), labels].cpu().numpy())
-            pred_confidences.extend(probs[range(len(labels)), preds].cpu().numpy())
-            texts.extend([tokenizer.decode(input_id, skip_special_tokens=True) for input_id in input_ids])
-
-    return true_labels, predictions, true_confidences, pred_confidences, texts
-
-true_labels, predictions, true_confidences, pred_confidences, texts = evaluate_model(model, test_dataloader)
 
 report = classification_report(true_labels, predictions)
 print(report)
@@ -119,11 +60,10 @@ plt.title('Confusion Matrix')
 plt.show()
 
 
-
 df = pd.DataFrame({
     'Text': texts,
-    'True Label': [f"{label+1} - ({conf*100:.2f}%)" for label, conf in zip(true_labels, true_confidences)],
-    'Predicted': [f"{pred+1} - ({conf*100:.2f}%)" for pred, conf in zip(predictions, pred_confidences)],
+    'True Label': [f"{label + 1} - ({conf * 100:.2f}%)" for label, conf in zip(true_labels, true_confidences)],
+    'Predicted': [f"{pred + 1} - ({conf * 100:.2f}%)" for pred, conf in zip(predictions, pred_confidences)],
 })
 
 errors_df = df[df['True Label'] != df['Predicted']]
@@ -137,5 +77,4 @@ table.field_names = ["True Label", "Predicted", "Text"]
 for index, row in errors_df.iterrows():
     table.add_row([row['True Label'], row['Predicted'], row['Text']])
 
-# Print the table
 print(table)

@@ -1,3 +1,6 @@
+# ПОПЫТКА РАЗМЕТИТЬ ДАННЫЕ С ПОМОЩЬЮ GPT
+
+
 from g4f.client import Client
 import psycopg2
 from web.db_config import db_params
@@ -14,6 +17,7 @@ def most_frequent(List):
     occurence_count = Counter(List)
     return occurence_count.most_common(1)[0][0]
 
+
 def clean_html(raw_html):
     cleanr = re.compile('<.*?>')
     cleantext = re.sub(cleanr, '', raw_html)
@@ -21,7 +25,7 @@ def clean_html(raw_html):
 
 
 def getTask():
-    df = pd.read_csv('data.csv')
+    df = pd.read_csv('../../v1/data.csv')
     texts = df['Texts'].tolist()
     labels = df['Labels'].tolist()
 
@@ -68,4 +72,3 @@ for category, task in zip(*getTask()):
     else:
         print('[', counter, ']')
     counter += 1
-
